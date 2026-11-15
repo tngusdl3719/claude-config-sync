@@ -1,0 +1,26 @@
+#!/bin/bash
+# Forced command for every claudesync key (authorized_keys `command=`): serves
+# claude-config.git and nothing else, whatever else the account could read.
+# Install: ssh <server> 'sudo install -m 755 /dev/stdin /usr/local/sbin/claudesync-git' < server/claudesync-git
+set -euo pipefail
+
+repo=${CLAUDESYNC_REPO:-/home/claudesync/claude-config.git}
+cmd=${SSH_ORIGINAL_COMMAND:-}
+
+refuse() {
+  echo "claude-config 저장소만 쓸 수 있어요" >&2
+  exit 1
+}
+
+verb=${cmd%% *}
+case "$verb" in
+  git-upload-pack | git-receive-pack) ;;
+  *) refuse ;;
+esac
+[ "$cmd" != "$verb" ] || refuse
+path=${cmd#* }
+case "$path" in
+  "'claude-config.git'" | "'claude-config.git/'" | "'/home/claudesync/claude-config.git'" | "'~/claude-config.git'") ;;
+  *) refuse ;;
+esac
+exec "$verb" "$repo"

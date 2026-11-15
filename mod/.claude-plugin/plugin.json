@@ -1,0 +1,6 @@
+{
+  "name": "config-sync",
+  "version": "0.1.0",
+  "description": "공용 Claude Code 설정을 PC끼리 동기화하는 앱 (/sync)",
+  "types": "./types/index.d.ts"
+}

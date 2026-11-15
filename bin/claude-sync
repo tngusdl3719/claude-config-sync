@@ -1,0 +1,4 @@
+#!/bin/sh
+# config-sync engine: every command prints one JSON value.
+here=$(cd "$(dirname "$0")" && pwd -P)
+exec /usr/bin/python3 -I "$here/../engine/main.py" "$@"

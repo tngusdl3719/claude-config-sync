@@ -1,0 +1,8 @@
+.superpowers/
+__pycache__/
+*.pyc
+mod/.claude-plugin/types/
+.DS_Store
+dist/
+app/.build/
+docs/superpowers/
