@@ -38,6 +38,7 @@ class FakeNotion:
         self.auth_headers: List[str] = []
         self.tokens = {TOKEN}                     # access tokens the API accepts
         self.codes: Dict[str, dict] = {}          # OAuth code -> {"pages", "redirect_uri", "used"}
+        self.broker_requests: List[dict] = []     # what reached the stand-in broker: its Authorization and body
         self.refresh_tokens: Dict[str, List[str]] = {}  # refresh token -> granted pages
         self.grants: Dict[str, List[str]] = {}    # access token -> granted pages
         self.token_requests: List[dict] = []
@@ -160,6 +161,13 @@ class FakeNotion:
                 raw = self._body()
                 if self.path == "/v1/oauth/token":
                     return self._oauth(raw)
+                if self.path == "/broker/token":  # stands in for the Worker, which adds the secret itself
+                    agent = self.headers.get("User-Agent") or ""
+                    fake.broker_requests.append({"authorization": self.headers.get("Authorization"),
+                                                 "user_agent": agent, "body": json.loads(raw or b"{}")})
+                    if agent.startswith("Python-urllib"):  # Cloudflare refuses this signature (error 1010)
+                        return self._send(403, {"title": "Error 1010: Access denied", "error_code": 1010})
+                    return self._oauth(raw, brokered=True)
                 if not self._authorized():
                     return
                 if self.path == "/v1/search":
@@ -258,9 +266,9 @@ class FakeNotion:
                     return self._send(200, {"object": "page", "id": dashed(row_id)})
                 self._send(404, {"object": "error", "code": "not_found"})
 
-            def _oauth(self, raw: bytes):
+            def _oauth(self, raw: bytes, brokered: bool = False):
                 expected = "Basic " + base64.b64encode(("%s:%s" % (CLIENT_ID, CLIENT_SECRET)).encode()).decode()
-                if self.headers.get("Authorization") != expected:
+                if not brokered and self.headers.get("Authorization") != expected:
                     return self._send(401, {"error": "invalid_client"})
                 body = json.loads(raw or b"{}")
                 fake.token_requests.append(body)

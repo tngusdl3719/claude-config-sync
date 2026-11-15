@@ -9,13 +9,14 @@ import threading
 import time
 from contextlib import redirect_stdout
 from unittest import mock
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import urlopen
 
 from helpers import TempCase, make_home, make_remote, read_json
 from fake_notion import CLIENT_ID, CLIENT_SECRET, FakeNotion
 from test_cli_backends import call as cli_call
 
+import claude_sync
 from claude_sync import cli, notion_store
 from claude_sync.gitio import head
 from claude_sync.notion import NotionError
@@ -393,6 +394,59 @@ class OAuthTest(TempCase):
             held.release()
         self.assertEqual(join(b, backend="notion", page=self.page, oauth=True, pc="pc-b", now=NOW)["result"], "ok")
         self.assertNotEqual(notion_store.load_secret(b, self.page), before)
+
+    def broker(self):
+        return self.fake.base + "/broker"
+
+    def test_signing_in_through_the_broker_never_needs_the_secret(self):
+        a = Paths(make_home(self.root, "a"))
+        out = notion_store.login(a, CLIENT_ID, broker=self.broker(), open_url=browser(self.fake, [self.page]),
+                                 port=0, timeout=10)
+        self.assertEqual(out["pages"], [{"id": self.page, "title": "Claude Sync 동기화"}])
+        (sent,) = self.fake.broker_requests
+        self.assertIsNone(sent["authorization"], "the app sends no client secret")
+        self.assertEqual(sent["user_agent"], "claude-sync/" + claude_sync.__version__, "Cloudflare refuses Python-urllib")
+        self.assertEqual(sent["body"]["grant_type"], "authorization_code")
+        self.assertNotIn(CLIENT_SECRET, self.keychain())
+        self.assertIn(self.broker(), unquote(self.keychain()), "the broker is what refreshes go to")
+
+    def test_a_broker_sign_in_refreshes_through_the_broker(self):
+        a = Paths(make_home(self.root, "a", skills=["brand"]))
+        notion_store.login(a, CLIENT_ID, broker=self.broker(), open_url=browser(self.fake, [self.page]), port=0, timeout=10)
+        out = init(a, pc="pc-a", skills=["brand"], mods=[], keys=["theme"], claude_md="move", now=NOW,
+                   backend="notion", page=self.page, oauth=True)
+        self.assertEqual(out["result"], "ok", out)
+        self.fake.expire(notion_store.load_secret(a, self.page))
+        edit_settings(a, theme="light")
+        s = run_sync(a, auto=False, now=NOW + 1)
+        self.assertEqual(s.last_result, "ok", s.last_error)
+        self.assertEqual(self.fake.broker_requests[-1]["body"]["grant_type"], "refresh_token")
+        self.assertIsNone(self.fake.broker_requests[-1]["authorization"])
+        self.assertNotIn(CLIENT_SECRET, self.keychain())
+
+    def test_only_an_https_broker_is_trusted(self):
+        a = Paths(make_home(self.root, "a"))
+        for broker in ("http://broker.example", "ftp://x", "https://", "file:///tmp/x"):
+            with self.assertRaises(notion_store.NotionError, msg=broker):
+                notion_store.login(a, CLIENT_ID, broker=broker, open_url=lambda url: None, port=0, timeout=1)
+        self.assertEqual(self.fake.broker_requests, [])
+
+    def test_cli_login_takes_a_broker_on_stdin(self):
+        a = Paths(make_home(self.root, "a"))
+        captured = {}
+
+        def fake_login(p, client_id, client_secret="", **kw):
+            captured.update(client_id=client_id, client_secret=client_secret, **kw)
+            return {"pages": [], "workspace": "w"}
+
+        out = io.StringIO()
+        stdin = io.StringIO(json.dumps({"client_id": CLIENT_ID, "broker": "https://broker.example"}) + "\n")
+        with mock.patch.object(notion_store, "login", side_effect=fake_login), mock.patch("sys.stdin", stdin), \
+                redirect_stdout(out):
+            code = cli.main(["--home", a.home, "notion-login"])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertEqual((captured["client_id"], captured["client_secret"], captured["broker"]),
+                         (CLIENT_ID, "", "https://broker.example"))
 
     def test_cli_login_takes_the_client_on_stdin(self):
         a = Paths(make_home(self.root, "a"))

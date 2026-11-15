@@ -10,6 +10,7 @@ Keeps the Claude Code setup of several Macs in step, but **only the parts you ma
 | `mod/` | The view inside Claude Code (`/sync`, a status line above the prompt) |
 | `app/` | The Mac app, Claude Sync (SwiftUI, macOS 14 or later) |
 | `installer/` | A Terminal installer, for setting up without the app |
+| `server/notion-broker/` | The Cloudflare Worker that finishes a Notion sign-in (it holds the connection's secret) |
 | `server/` | (Optional) scripts for a self-hosted SSH git server |
 | `scripts/` | Build, deploy and diagnostic scripts |
 
@@ -43,11 +44,11 @@ An update also carries the sync engine. When the app's engine is newer than the 
 |---|---|
 | **GitLab** | A private project, and a token for each PC from Settings → Access tokens (role **Developer**, scopes `read_repository` and `write_repository`). For a new project, unprotect `main` under Settings → Repository → Protected branches. |
 | **GitHub** | A private repository. A README is fine, but do not pick a `.gitignore` or license template. For each PC, a **fine-grained token** (Settings → Developer settings) limited to that repository (*Only select repositories*) with **Contents: Read and write**. |
-| **Notion** | One page to sync with. Connect with **Connect with Notion** (signing in) or with an internal integration's **secret key** (`ntn_…`). |
+| **Notion** | One page to sync with. **Connect with Notion**: sign in, allow the page, pick it from the list. (Or, under *Use a secret key instead*, an internal integration's secret key `ntn_…` and the page's link.) |
 
 - Tokens and secret keys are typed into hidden fields and kept **only in this Mac's keychain**. They never go into files, logs or command arguments.
 - Every PC has to use the same storage to sync with the others. You can switch between GitLab, GitHub and Notion, or connect again, later under **Storage** in the app. If the new storage holds other history that does not continue this PC's, the move is refused and nothing changes.
-- **Connect with Notion** appears only on a Mac that has your own Notion public connection in its keychain (see *Development*). Without it, use a secret key.
+- **Connect with Notion** works on every Mac. Notion's sign-in ends with a request that needs the connection's secret, which an app anyone can download cannot keep, so that one step goes through a small broker (`server/notion-broker`, a Cloudflare Worker) that holds the secret, passes the request to Notion and keeps nothing. Your Notion tokens stay in your Mac's keychain.
 
 ### Everyday use
 
@@ -82,7 +83,8 @@ scripts/deploy.sh                            # copy the engine and mod into the 
 scripts/release.sh                           # publish AppInfo.swift's version on GitHub: dmg, signature, installer
 ```
 
-- **Connect with Notion**: create a public connection in Notion (redirect URI `http://localhost:47821/callback`) and store its client ID and secret in this Mac's keychain with `bash scripts/set-notion-oauth.sh`. The app reads it from the keychain when it starts; nothing secret goes into the app, so the same dmg is fine for everyone.
+- **The Notion sign-in broker**: `server/notion-broker` (tests: `node --test server/notion-broker/`). Deploy it from that folder with `npx wrangler deploy`, then store the connection's secret once with `npx wrangler secret put NOTION_CLIENT_SECRET`; its client ID and redirect URI (`http://localhost:47821/callback`) are in `wrangler.toml`, and the app names the client ID and the broker's address in `AppInfo.swift`.
+- **A connection of your own** instead: create a public connection in Notion with that redirect URI and store its client ID and secret in a Mac's keychain with `bash scripts/set-notion-oauth.sh`; that Mac then signs in with it directly, without the broker.
 - **Releasing**: the version lives in `app/Sources/ClaudeSyncCore/AppInfo.swift` (the engine's `__version__` must match; a test checks). Releases are signed with an Ed25519 key whose private half stays in the releasing Mac's keychain (`bash scripts/update-key.sh new` once; its public half is `AppInfo.updatePublicKey`). Commit, push, then run `scripts/release.sh`.
-- If you fork this, make your own update key and put its public half in `AppInfo.updatePublicKey`, and point `AppInfo.repository` at your repository; otherwise your apps will wait for releases signed with someone else's key.
+- If you fork this, make your own update key and put its public half in `AppInfo.updatePublicKey`, point `AppInfo.repository` at your repository, and deploy your own broker for your own Notion connection (`AppInfo.notionClientID`, `AppInfo.notionBroker`).
 - `dist/` is not tracked by git.

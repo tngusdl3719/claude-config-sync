@@ -52,6 +52,15 @@ class DmgTest(TempCase):
             os.path.join(ROOT, "bin", "claude-sync"), os.path.join(ROOT, "app", "test.sh")]
         self.assertEqual([os.path.relpath(s, ROOT) for s in scripts if not os.access(s, os.X_OK)], [])
 
+    def test_the_notion_broker_passes_its_own_tests(self):
+        import shutil
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node on this Mac")
+        r = subprocess.run([node, "--test", os.path.join(ROOT, "server", "notion-broker")],
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout[-2000:] + r.stderr[-2000:])
+
     def test_the_build_puts_no_secret_in_the_app(self):
         with open(BUILD_APP, encoding="utf-8") as f:
             script = f.read()

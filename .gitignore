@@ -6,3 +6,5 @@ mod/.claude-plugin/types/
 dist/
 app/.build/
 docs/superpowers/
+server/notion-broker/.wrangler/
+node_modules/

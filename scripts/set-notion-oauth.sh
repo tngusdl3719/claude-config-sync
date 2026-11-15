@@ -1,6 +1,7 @@
 #!/bin/bash
 # Notion 공개 연결(public connection)의 client id와 client secret을 이 Mac 키체인에 넣습니다.
-# Claude Sync 앱이 실행될 때 이 키체인 항목을 읽어 'Notion으로 연결'을 보여 줍니다(앱 안에는 넣지 않아요).
+# (선택) 이 Mac만의 Notion 공개 연결을 쓸 때: Claude Sync 앱이 실행될 때 이 키체인 항목을 읽어, 중계 서버
+# (server/notion-broker) 대신 이 연결로 직접 'Notion으로 연결'을 해요. 앱 안에는 넣지 않아요.
 # secret은 화면·인자에 남지 않게 security가 직접 물어봅니다.   실행: bash scripts/set-notion-oauth.sh
 set -euo pipefail
 item=claude-sync-notion-oauth

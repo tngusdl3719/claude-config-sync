@@ -508,16 +508,18 @@ def run(p: Paths, args) -> dict:
     if args.cmd == "candidates":
         return candidates(p)
     if args.cmd == "notion-login":
-        # The public connection's id and secret arrive as one JSON line on stdin, never in argv.
+        # The public connection arrives as one JSON line on stdin, never in argv: its id with its secret,
+        # or with the address of the broker that holds the secret (server/notion-broker).
         try:
             client = json.loads(sys.stdin.readline() or "{}")
         except ValueError:
             client = {}
-        if not isinstance(client, dict) or not client.get("client_id") or not client.get("client_secret"):
+        if not isinstance(client, dict) or not client.get("client_id") \
+                or not (client.get("client_secret") or client.get("broker")):
             raise actions.ActionError(t("Notion 공개 연결 정보를 표준 입력으로 넘겨 주세요", "Pass the Notion public connection details on standard input"))
         try:
-            return notion_store.login(p, str(client["client_id"]), str(client["client_secret"]),
-                                      port=args.port, timeout=args.timeout)
+            return notion_store.login(p, str(client["client_id"]), str(client.get("client_secret") or ""),
+                                      broker=str(client.get("broker") or ""), port=args.port, timeout=args.timeout)
         except NotionError as e:
             raise actions.ActionError(str(e)) from None
     if args.cmd == "setup":

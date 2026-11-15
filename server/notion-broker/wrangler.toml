@@ -1,0 +1,13 @@
+# Deploy: npx wrangler deploy (from this folder), then once: npx wrangler secret put NOTION_CLIENT_SECRET
+name = "claude-sync-notion"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+# Nothing about requests is kept: no logs, no traces.
+[observability]
+enabled = false
+
+[vars]
+NOTION_CLIENT_ID = "419d872b-594c-81ca-9ec5-00372dc77561"
+REDIRECT_URI = "http://localhost:47821/callback"

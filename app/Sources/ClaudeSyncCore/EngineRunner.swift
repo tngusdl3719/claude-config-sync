@@ -148,8 +148,9 @@ private final class WriteFlag: @unchecked Sendable {
     }
 }
 
-/// Where the engine lives: the shared repo's copy (the one the mod runs and syncs keep up to
-/// date) when it exists, else the copy inside the app, used before the first setup.
+/// Where the engine lives: the shared repo's copy (the one the mod runs and syncs keep up to date) when it
+/// exists, else the copy inside the app, used before the first setup. The app's copy also runs when it is
+/// newer than the shared one: a receive-only PC never puts it in the shared repo itself.
 public enum EngineLocator {
     public static func sharedFolder(home: String) -> String {
         home + "/.claude/shared/mods/config-sync"
@@ -165,11 +166,15 @@ public enum EngineLocator {
 
     public static func resolve(home: String, bundledResources: String?) -> String? {
         let shared = sharedEngine(home: home)
-        if FileManager.default.isExecutableFile(atPath: shared) { return shared }
-        if let bundledResources {
-            let bundled = bundledResources + "/engine/bin/claude-sync"
-            if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
+        let bundled = bundledResources.map { $0 + "/engine/bin/claude-sync" }
+            .flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+        if FileManager.default.isExecutableFile(atPath: shared) {
+            if let bundled, let resources = bundledResources,
+               EngineVersion.newer(bundled: resources + "/engine", than: sharedFolder(home: home)) {
+                return bundled
+            }
+            return shared
         }
-        return nil
+        return bundled
     }
 }

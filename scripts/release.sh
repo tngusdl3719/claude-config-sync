@@ -18,6 +18,10 @@ git fetch -q origin
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || fail "HEAD is not origin/main: push first"
 gh release view "$tag" >/dev/null 2>&1 && fail "$tag is already released"
 [ "$(bash scripts/update-key.sh public)" = "$public_key" ] || fail "this Mac's update key is not the one the app trusts"
+# The Notion sign-in broker the app names must be up: it refuses an empty request with 400 invalid_request.
+broker=$(sed -n 's/.*static let notionBroker = "\(.*\)".*/\1/p' "$info")
+answer=$(curl -sS -m 15 -X POST -H 'Content-Type: application/json' -d '{}' "$broker/token" 2>/dev/null || true)
+[ "$answer" = '{"error":"invalid_request"}' ] || fail "the Notion sign-in broker ($broker) does not answer: deploy server/notion-broker"
 
 bash scripts/build-app.sh
 bash scripts/build-installer.sh

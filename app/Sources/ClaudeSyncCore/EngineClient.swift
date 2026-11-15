@@ -34,23 +34,36 @@ public enum Backend: String, Equatable, Sendable {
     case git, notion
 }
 
-/// A Notion public connection (spec §7) set up on this Mac; never inside the app, which everyone may download.
-public struct NotionOAuthClient: Decodable, Equatable, Sendable {
+/// A Notion public connection (spec §7) for 'Notion으로 연결'. Its secret is never inside the app, which
+/// everyone may download: the app's own connection signs in through a broker that holds the secret
+/// (server/notion-broker), and a Mac with a connection of its own keeps that in its keychain.
+public struct NotionOAuthClient: Equatable, Sendable {
     public var clientID: String
+    /// A secret of this Mac's own (scripts/set-notion-oauth.sh); empty when a broker holds it.
     public var clientSecret: String
+    /// The broker that holds the secret; nil for a Mac with its own.
+    public var broker: String?
 
-    enum CodingKeys: String, CodingKey {
-        case clientID = "client_id"
-        case clientSecret = "client_secret"
-    }
-
-    public init(clientID: String, clientSecret: String) {
+    public init(clientID: String, clientSecret: String = "", broker: String? = nil) {
         self.clientID = clientID
         self.clientSecret = clientSecret
+        self.broker = broker
     }
 
-    /// This Mac's connection, read once (scripts/set-notion-oauth.sh adds it; the app sees it when it next starts).
-    public static let thisMac = fromKeychain()
+    /// What `notion-login` reads on stdin: the id with the broker, or with this Mac's secret.
+    public var engineInput: [String: String] {
+        broker.map { ["client_id": clientID, "broker": $0] } ?? ["client_id": clientID, "client_secret": clientSecret]
+    }
+
+    /// The app's own connection, through its broker (nil in a build that names no broker).
+    public static let builtIn: NotionOAuthClient? = AppInfo.notionBroker.isEmpty || AppInfo.notionClientID.isEmpty
+        ? nil : NotionOAuthClient(clientID: AppInfo.notionClientID, broker: AppInfo.notionBroker)
+
+    /// A Mac's own connection when it has one, else the app's.
+    public static func choose(keychain: NotionOAuthClient?) -> NotionOAuthClient? { keychain ?? builtIn }
+
+    /// This Mac's connection, read once (the app sees a keychain change when it next starts).
+    public static let thisMac = choose(keychain: fromKeychain())
 
     /// The keychain item scripts/set-notion-oauth.sh makes (account = client id, password = client secret),
     /// read through `security`, which made it and so may read it without asking. Nil when there is none.
@@ -268,8 +281,7 @@ public struct EngineClient: Sendable {
 
     /// 'Notion으로 연결': the engine opens the browser and waits (up to 5 minutes) for the consent.
     public func notionLogin(_ client: NotionOAuthClient) async -> Result<NotionLogin, EngineFailure> {
-        let line = (try? JSONSerialization.data(withJSONObject: ["client_id": client.clientID,
-                                                                 "client_secret": client.clientSecret]))
+        let line = (try? JSONSerialization.data(withJSONObject: client.engineInput))
             .map { String(decoding: $0, as: UTF8.self) + "\n" } ?? "\n"
         return await call(NotionLogin.self, ["notion-login"], stdin: line, timeout: Timeouts.setup)
     }

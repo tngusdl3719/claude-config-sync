@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .lang import t
 from .gitio import git, head
-from .notion import (DELTA_NAME, FULL_NAME, OAUTH_ERRORS, Client, NotionError, authorize_url, files, oauth_token,
+from .notion import (DELTA_NAME, FULL_NAME, OAUTH_ERRORS, Client, NotionError, authorize_url, broker_url, files, oauth_token,
                      page_id, plain, rich, select, text, title)
 from .paths import Paths
 from .remote import helper
@@ -242,11 +242,33 @@ def _listen(p: Paths, port: int, make: Callable[[], HTTPServer]) -> HTTPServer:
                                                   " Quit that program and try again, or connect with 'Use a secret key instead'."))
 
 
-def login(p: Paths, client_id: str, client_secret: str, *, open_url: Optional[Callable[[str], None]] = None,
-          port: int = OAUTH_PORT, timeout: float = 300) -> dict:
+def _client_text(client_id: str, client_secret: str, broker: str) -> str:
+    """How a sign-in's client is kept in the keychain (for refreshes): the broker, or the id and secret."""
+    return json.dumps({"client_id": client_id, "broker": broker}) if broker else "%s %s" % (client_id, client_secret)
+
+
+def _client_from(text: str) -> Tuple[str, str, str]:
+    """(client id, secret, broker) from what _client_text kept; ValueError when it is not one."""
+    if text.startswith("{"):
+        kept = json.loads(text)
+        broker = broker_url(str(kept.get("broker") or ""))
+        if not kept.get("client_id") or not broker:
+            raise ValueError("no client")
+        return str(kept["client_id"]), "", broker
+    client_id, client_secret = text.split(" ", 1)
+    return client_id, client_secret, ""
+
+
+def login(p: Paths, client_id: str, client_secret: str = "", *, broker: str = "",
+          open_url: Optional[Callable[[str], None]] = None, port: int = OAUTH_PORT, timeout: float = 300) -> dict:
     """Sign in with Notion: consent in the browser, the code comes back to this Mac, tokens go to
-    the keychain. Returns the pages the person shared (to pick the sync page from)."""
-    if not client_id or not client_secret:
+    the keychain. Returns the pages the person shared (to pick the sync page from). The code becomes
+    tokens with the client secret, or through `broker` (server/notion-broker), which holds it."""
+    if broker:
+        broker = broker_url(broker)
+        if not broker:
+            raise NotionError(0, "bad_broker", t("Notion 로그인 중계 주소가 올바르지 않아요", "The Notion sign-in broker address is not valid"))
+    if not client_id or not (client_secret or broker):
         raise NotionError(0, "no_client", t("Notion 공개 연결 정보가 없어요", "No Notion public connection details"))
     state = secrets.token_urlsafe(24)
     answer: dict = {}
@@ -299,8 +321,8 @@ def login(p: Paths, client_id: str, client_secret: str, *, open_url: Optional[Ca
         shown = query["error"] if query["error"] in OAUTH_ERRORS else "unknown"
         raise NotionError(0, "oauth_error", t("Notion 연결에 실패했어요: %s", "Could not connect to Notion: %s") % shown)
     tokens = oauth_token(client_id, client_secret, {"grant_type": "authorization_code", "code": query.get("code", ""),
-                                                    "redirect_uri": redirect})
-    save_secret(p, PENDING_CLIENT, "%s %s" % (client_id, client_secret))
+                                                    "redirect_uri": redirect}, broker=broker)
+    save_secret(p, PENDING_CLIENT, _client_text(client_id, client_secret, broker))
     save_secret(p, PENDING_REFRESH, tokens["refresh_token"])
     save_secret(p, OAUTH_PENDING, tokens["access_token"])
     return {"pages": Client(tokens["access_token"]).search_pages(), "workspace": tokens.get("workspace_name") or ""}
@@ -309,12 +331,13 @@ def login(p: Paths, client_id: str, client_secret: str, *, open_url: Optional[Ca
 def _refresh(p: Paths, s: State) -> None:
     """A new token pair for a signed-in PC; runs under the sync lock, so one refresh token is used once."""
     try:
-        client_id, client_secret = load_secret(p, OAUTH_CLIENT).split(" ", 1)
+        client_id, client_secret, broker = _client_from(load_secret(p, OAUTH_CLIENT))
         refresh = load_secret(p, OAUTH_REFRESH)
     except (NotionError, ValueError):
         raise NotionError(401, "reconnect", t(*RECONNECT)) from None
     try:
-        tokens = oauth_token(client_id, client_secret, {"grant_type": "refresh_token", "refresh_token": refresh})
+        tokens = oauth_token(client_id, client_secret, {"grant_type": "refresh_token", "refresh_token": refresh},
+                             broker=broker)
     except NotionError as e:
         if e.status in (400, 401):
             raise NotionError(401, "reconnect", t(*RECONNECT)) from None

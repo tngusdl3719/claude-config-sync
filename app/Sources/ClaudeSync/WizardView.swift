@@ -98,9 +98,9 @@ struct WizardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(LocalizedStringKey(L10n.t("1. 아래 버튼으로 Notion 연결(integration) 페이지를 열고, 새 **내부 연결**을 만든 뒤 비밀 키를 복사해 두세요.",
                                                     "1. Open Notion's integrations page with the button below, make a new **internal integration**, and copy its secret key.")))
-                    Text(L10n.t("2. 동기화용 빈 페이지를 만들고, 오른쪽 위 … → 연결(Connections) → 방금 만든 연결을 추가하세요.",
-                                    "2. Make an empty page for syncing, then add the integration from … → Connections at its top right."))
-                    Text(L10n.t("3. 그 페이지의 … → 링크 복사로 받은 주소를 아래에 붙여 넣으세요.", "3. Paste the address from the page's … → Copy link below."))
+                    Text(L10n.t("2. 동기화용 빈 페이지를 만들고, 그 페이지 오른쪽 위 점 세 개(…) 메뉴 → 아래쪽 연결 → 연결 추가하기에서 방금 만든 연결을 검색해 추가하세요.",
+                                    "2. Make an empty page for syncing. In its three-dot (…) menu at the top right, open Connections near the bottom → Add connections, and search for the integration you just made."))
+                    Text(L10n.t("3. 같은 점 세 개(…) 메뉴 → 링크 복사로 받은 주소를 아래에 붙여 넣으세요.", "3. Paste the address from the same three-dot (…) menu → Copy link below."))
                 }
                 .font(.callout)
                 Button(L10n.t("Notion 연결 만들기", "Make a Notion integration")) { NSWorkspace.shared.open(Wizard.notionIntegrationsPage) }

@@ -9,12 +9,15 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from . import __version__
 from .lang import t
 
 VERSION = "2026-03-11"
+# Who is asking. Cloudflare (in front of the sign-in broker) refuses Python's default agent (error 1010).
+USER_AGENT = "claude-sync/" + __version__
 FULL_NAME, DELTA_NAME = "전체본", "변경분"
 DEFAULT_BASE = "https://api.notion.com"
 TIMEOUT = 60
@@ -92,15 +95,32 @@ OAUTH_MESSAGES = {
 }
 
 
+def broker_url(text: str) -> str:
+    """A sign-in broker's address (server/notion-broker), without a trailing slash: https, or http on this
+    Mac (for tests). '' for anything else, which is never sent a code or a token."""
+    text = (text or "").strip().rstrip("/")
+    u = urlparse(text)
+    if u.scheme == "https" and u.hostname:
+        return text
+    if u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost"):
+        return text
+    return ""
+
+
 def oauth_token(client_id: str, client_secret: str, body: dict, base: Optional[str] = None,
-                sleep: Callable[[float], Any] = time.sleep) -> dict:
-    """POST /v1/oauth/token: a code (grant_type=authorization_code) or a refresh token for a new pair."""
-    basic = base64.b64encode(("%s:%s" % (client_id, client_secret)).encode()).decode()
-    headers = {"Authorization": "Basic " + basic, "Content-Type": "application/json", "Accept": "application/json",
-               "Notion-Version": VERSION}
+                sleep: Callable[[float], Any] = time.sleep, broker: str = "") -> dict:
+    """POST /v1/oauth/token: a code (grant_type=authorization_code) or a refresh token for a new pair.
+    With a `broker` the request goes there instead, without the secret: the broker adds it."""
+    headers = {"Content-Type": "application/json", "Accept": "application/json", "Notion-Version": VERSION,
+               "User-Agent": USER_AGENT}
+    if broker:
+        url = broker + "/token"
+    else:
+        url = _base(base) + "/v1/oauth/token"
+        headers["Authorization"] = "Basic " + base64.b64encode(("%s:%s" % (client_id, client_secret)).encode()).decode()
     for attempt in range(RETRIES + 1):
         try:
-            with urlopen(Request(_base(base) + "/v1/oauth/token", data=json.dumps(body).encode(), method="POST",
+            with urlopen(Request(url, data=json.dumps(body).encode(), method="POST",
                                  headers=headers), timeout=TIMEOUT) as r:
                 out = json.loads(r.read() or b"{}")
             if not out.get("access_token") or not out.get("refresh_token"):
@@ -120,7 +140,8 @@ def oauth_token(client_id: str, client_secret: str, body: dict, base: Optional[s
                               else t("Notion 연결에 실패했어요 (%d %s)", "Could not connect to Notion (%d %s)") % (e.code, code)) \
                 from None
         except (URLError, OSError, ValueError) as e:
-            raise NotionError(0, "offline", t("Notion에 연결하지 못했어요: %s", "Could not reach Notion: %s") % _reason(e).replace(client_secret, "***")[:200]) \
+            reason = _reason(e).replace(client_secret, "***") if client_secret else _reason(e)
+            raise NotionError(0, "offline", t("Notion에 연결하지 못했어요: %s", "Could not reach Notion: %s") % reason[:200]) \
                 from None
     raise NotionError(429, "rate_limited")  # not reached
 
@@ -141,7 +162,7 @@ class Client:
             raise NotionError(0, "bad_secret", t("Notion 비밀 키 형식이 올바르지 않아요. 공백·줄바꿈 없이 다시 붙여 넣어 주세요", "The Notion secret key is not in the right form. Paste it again without spaces or line breaks"))
         if body is not None:
             data = json.dumps(body).encode()
-        headers = {"Authorization": "Bearer " + self._secret, "Notion-Version": VERSION}
+        headers = {"Authorization": "Bearer " + self._secret, "Notion-Version": VERSION, "User-Agent": USER_AGENT}
         if data is not None:
             headers["Content-Type"] = content_type
         for attempt in range(RETRIES + 1):

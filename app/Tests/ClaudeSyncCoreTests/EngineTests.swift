@@ -247,6 +247,29 @@ private func leftovers(_ marker: String) -> String {
         #expect(sent == ["client_id": "client-1", "client_secret": secret])
     }
 
+    @Test func aBrokeredSignInSendsNoSecret() async throws {
+        let f = try FakeEngines()
+        let dir = f.dir.path
+        let engine = try f.script("login", """
+        cat > "\(dir)/stdin"
+        echo '{"pages": [], "workspace": "w"}'
+        """)
+        let client = NotionOAuthClient(clientID: "client-1", broker: "https://broker.example")
+        _ = await EngineClient(runner: EngineRunner(executable: engine)).notionLogin(client)
+        let sent = try JSONSerialization.jsonObject(with: Data(f.read("stdin").utf8)) as? [String: String]
+        #expect(sent == ["client_id": "client-1", "broker": "https://broker.example"])
+    }
+
+    @Test func everyMacCanSignInWithNotion() throws {
+        let own = NotionOAuthClient(clientID: "mine", clientSecret: "secret_x")
+        #expect(NotionOAuthClient.choose(keychain: own) == own, "a Mac with its own connection keeps it")
+        let builtIn = try #require(NotionOAuthClient.choose(keychain: nil), "the others sign in through the broker")
+        #expect(builtIn == NotionOAuthClient(clientID: AppInfo.notionClientID, broker: AppInfo.notionBroker))
+        #expect(builtIn.clientSecret.isEmpty)
+        let url = try #require(URL(string: AppInfo.notionBroker))
+        #expect(url.scheme == "https" && url.host != nil)
+    }
+
     @Test func signedInNotionJoinAndInitUseTheLoginNotASecret() async throws {
         let f = try FakeEngines()
         let dir = f.dir.path
@@ -347,6 +370,24 @@ private func leftovers(_ marker: String) -> String {
         FileManager.default.createFile(atPath: sharedEngine, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755])
         #expect(EngineLocator.resolve(home: home, bundledResources: bundled) == sharedEngine)
         #expect(EngineLocator.isConfigured(home: home))
+
+        // A newer engine inside the app runs instead of an older shared one (a receive-only PC never updates
+        // the shared engine itself, and an old one cannot sign in through the broker).
+        func stamp(_ root: String, _ version: String?) throws {
+            try FileManager.default.createDirectory(atPath: root + "/engine/claude_sync", withIntermediateDirectories: true)
+            let text = "\"\"\"engine\"\"\"\n" + (version.map { "__version__ = \"\($0)\"\n" } ?? "")
+            try text.write(toFile: root + "/engine/claude_sync/__init__.py", atomically: true, encoding: .utf8)
+        }
+        let sharedRoot = home + "/.claude/shared/mods/config-sync"
+        try stamp(bundled + "/engine", "0.6.1")
+        try stamp(sharedRoot, nil)
+        #expect(EngineLocator.resolve(home: home, bundledResources: bundled) == bundledEngine)
+        try stamp(sharedRoot, "0.6.0")
+        #expect(EngineLocator.resolve(home: home, bundledResources: bundled) == bundledEngine)
+        try stamp(sharedRoot, "0.6.1")
+        #expect(EngineLocator.resolve(home: home, bundledResources: bundled) == sharedEngine)
+        try stamp(sharedRoot, "0.7.0")
+        #expect(EngineLocator.resolve(home: home, bundledResources: bundled) == sharedEngine)
     }
 }
 
