@@ -31,7 +31,7 @@ struct WizardView: View {
     @State private var tokenText = ""
     @State private var receiveOnly = false
     /// The app's Notion public connection; nil in a build without one (then only the secret-key way).
-    private let oauthClient = NotionOAuthClient.load(resources: Bundle.main.resourcePath)
+    private let oauthClient = NotionOAuthClient.thisMac
     @State private var useSecretKey = false
     @State private var login: NotionLogin?
     @State private var loginPage = ""

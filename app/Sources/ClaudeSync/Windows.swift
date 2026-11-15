@@ -189,6 +189,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            UpdateSection(updater: model.updater)
             Section(L10n.t("앱", "App")) {
                 Toggle(L10n.t("로그인할 때 실행", "Open at login"), isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
                 if let note = model.launchAtLoginNote {
@@ -219,6 +220,29 @@ struct SettingsView: View {
         } message: {
             Text(L10n.t("이 PC의 공용 설정 변경이 저장소로 올라가요. 회사 PC라면 회사 규정을 먼저 확인하세요.",
                          "Changes to shared settings on this PC will be sent to the storage. On a work PC, check your company's rules first."))
+        }
+    }
+}
+
+/// Settings: quiet updates from GitHub.
+private struct UpdateSection: View {
+    @Bindable var updater: Updater
+
+    var body: some View {
+        Section(L10n.t("업데이트", "Updates")) {
+            Toggle(L10n.t("자동 업데이트", "Update automatically"), isOn: $updater.enabled)
+            Text(Presentation.update(updater.phase)).font(.callout)
+            HStack {
+                Button(L10n.t("지금 확인", "Check now")) { Task { await updater.check() } }
+                    .disabled(updater.phase == .checking || { if case .downloading = updater.phase { return true } else { return false } }())
+                if case .ready = updater.phase {
+                    Button(L10n.t("설치하고 다시 시작", "Install and restart")) { updater.installNow() }
+                }
+            }
+            Text(L10n.t("새 버전은 GitHub에서 받아 서명을 확인한 뒤, 창이 닫혀 있고 동기화 중이 아닐 때 설치하고 조용히 다시 시작해요. 회사 Mac처럼 GitHub에 접속할 수 없으면 확인만 실패하고 넘어가요.",
+                        "New versions come from GitHub. After checking the signature, the app installs one and quietly restarts while no window is open and nothing syncs. A Mac that cannot reach GitHub (a work Mac) just skips the check."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

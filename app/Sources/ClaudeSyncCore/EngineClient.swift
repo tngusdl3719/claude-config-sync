@@ -34,7 +34,7 @@ public enum Backend: String, Equatable, Sendable {
     case git, notion
 }
 
-/// The app's Notion public connection (spec §7), shipped inside the app bundle for personal use.
+/// A Notion public connection (spec §7) set up on this Mac; never inside the app, which everyone may download.
 public struct NotionOAuthClient: Decodable, Equatable, Sendable {
     public var clientID: String
     public var clientSecret: String
@@ -49,13 +49,51 @@ public struct NotionOAuthClient: Decodable, Equatable, Sendable {
         self.clientSecret = clientSecret
     }
 
-    /// `notion-oauth.json` in the app's resources, if this build has one.
-    public static func load(resources: String?) -> NotionOAuthClient? {
-        guard let resources,
-              let data = FileManager.default.contents(atPath: resources + "/notion-oauth.json"),
-              let c = try? JSONDecoder().decode(NotionOAuthClient.self, from: data),
-              !c.clientID.isEmpty, !c.clientSecret.isEmpty else { return nil }
-        return c
+    /// This Mac's connection, read once (scripts/set-notion-oauth.sh adds it; the app sees it when it next starts).
+    public static let thisMac = fromKeychain()
+
+    /// The keychain item scripts/set-notion-oauth.sh makes (account = client id, password = client secret),
+    /// read through `security`, which made it and so may read it without asking. Nil when there is none.
+    public static func fromKeychain(security: String = "/usr/bin/security",
+                                    item: String = "claude-sync-notion-oauth") -> NotionOAuthClient? {
+        guard let attributes = output(security, ["find-generic-password", "-s", item]),
+              let pattern = try? Regex(#""acct"<blob>="([^"]+)""#),
+              let match = attributes.firstMatch(of: pattern),
+              let id = match.output[1].substring.map(String.init),
+              let secret = output(security, ["find-generic-password", "-s", item, "-w"])?
+                  .trimmingCharacters(in: .whitespacesAndNewlines),
+              !id.isEmpty, !secret.isEmpty else { return nil }
+        return NotionOAuthClient(clientID: id, clientSecret: secret)
+    }
+
+    private static func output(_ executable: String, _ args: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = args
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+    }
+}
+
+/// What `adopt-engine` did: whether the shared engine was replaced, from which version to which.
+public struct AdoptResult: Decodable, Equatable, Sendable {
+    public var adopted: Bool
+    public var from: String?
+    public var to: String?
+    /// "receive_only" when this PC leaves the shared repo alone.
+    public var reason: String?
+
+    public init(adopted: Bool, from: String?, to: String?, reason: String?) {
+        self.adopted = adopted
+        self.from = from
+        self.to = to
+        self.reason = reason
     }
 }
 
@@ -248,6 +286,11 @@ public struct EngineClient: Sendable {
         var args = ["set-remote", "--backend", "notion", "--page", page]
         if secret == nil { args.append("--oauth") }
         return await call(EngineOK.self, args, stdin: secret.map(Self.stdinLine), timeout: Timeouts.setup)
+    }
+
+    /// Puts the engine this app carries (`folder`) into the shared repo when it is newer; run with that engine.
+    public func adoptEngine(from folder: String) async -> Result<AdoptResult, EngineFailure> {
+        await call(AdoptResult.self, ["adopt-engine", folder], timeout: Timeouts.quick)
     }
 
     public func setReceiveOnly(_ on: Bool) async -> Result<Status, EngineFailure> {

@@ -40,6 +40,8 @@ final class AppModel {
     private(set) var scheduler: SyncScheduler
     private var notified: Set<String> = []
     private var timer: Timer?
+    /// Quiet updates from GitHub; installed only while no engine work runs.
+    @ObservationIgnored private(set) var updater: Updater!
 
     init() {
         let saved = UserDefaults.standard.integer(forKey: "syncIntervalMinutes")
@@ -48,6 +50,7 @@ final class AppModel {
         translations = TranslationCache(
             dictionary: UserDefaults.standard.dictionary(forKey: "descriptionTranslations") as? [String: String] ?? [:])
         L10n.current = language
+        updater = Updater(isIdle: { [weak self] in self?.gate.current == nil })
     }
 
     // MARK: descriptions
@@ -122,11 +125,13 @@ final class AppModel {
     // MARK: running
 
     func start() {
-        // Status first, so the launch sync knows whether automatic sync is on.
+        // Status first, so the launch sync knows whether automatic sync is on (and whether this PC sends).
         Task {
             await refresh()
+            await handOverEngine()
             await autoSyncIfDue()
         }
+        updater.start()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.refresh()
@@ -137,6 +142,34 @@ final class AppModel {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in await self?.syncNow(manual: false) }
+        }
+    }
+
+    /// Hands the engine this app carries to the shared repo when it is newer than the shared one (never from
+    /// a receive-only PC), then syncs when automatic sync is on: how an app update brings the engine to every
+    /// PC. With automatic sync off it goes with the next sync the person starts.
+    func handOverEngine() async {
+        guard isConfigured, let s = status, !s.receiveOnly, let resources = Bundle.main.resourcePath else { return }
+        let carried = resources + "/engine"
+        guard EngineVersion.newer(bundled: carried, than: EngineLocator.sharedFolder(home: home)) else { return }
+        let engine = EngineClient(runner: EngineRunner(executable: carried + "/bin/claude-sync"))
+        let result = await exclusive(L10n.t("새 동기화 엔진을 넣는 중", "Putting in the new sync engine")) {
+            await engine.adoptEngine(from: carried)
+        }
+        switch result {
+        case .success(let r)? where r.adopted:
+            let version = r.to ?? ""
+            if s.autoEnabled {
+                await syncNow(manual: false)
+                say(L10n.t("동기화 엔진을 \(version) 버전으로 바꿔 다른 PC에도 보냈어요", "Updated the sync engine to \(version) and sent it to the other PCs"))
+            } else {
+                say(L10n.t("동기화 엔진을 \(version) 버전으로 바꿨어요. 다음에 동기화할 때 다른 PC에도 가요",
+                           "Updated the sync engine to \(version); it goes to the other PCs with the next sync"))
+            }
+        case .failure(let f)?:
+            message = f.message
+        default:
+            break
         }
     }
 

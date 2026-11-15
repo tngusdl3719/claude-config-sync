@@ -1,9 +1,11 @@
 #!/bin/bash
-# Builds dist/Claude Sync.app (a Dock app with a menu bar icon; ad-hoc signed, engine and mod inside) and dist/ClaudeSync-<version>.zip
-# with the Command Line Tools' Swift; no Xcode needed. The version comes from AppInfo.swift.
+# Builds dist/Claude Sync.app (a Dock app with a menu bar icon; ad-hoc signed, engine and mod inside) and
+# dist/ClaudeSync-<version>.dmg with the Command Line Tools' Swift; no Xcode needed. The version comes from
+# AppInfo.swift. Nothing secret goes in: anyone may download this app (a Notion public connection is read
+# from the keychain of the Mac that has one, see scripts/set-notion-oauth.sh).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd -P)
-version=$(sed -n 's/.*version = "\(.*\)".*/\1/p' "$root/app/Sources/ClaudeSyncCore/AppInfo.swift")
+version=$(sed -n 's/.*static let version = "\(.*\)".*/\1/p' "$root/app/Sources/ClaudeSyncCore/AppInfo.swift")
 dist="$root/dist"
 app="$dist/Claude Sync.app"
 
@@ -34,8 +36,10 @@ cat > "$app/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-# The Dock icon (drawn by scripts/make-icon.swift).
+# The Dock icon (drawn by scripts/make-icon.swift), and the script that swaps an update in.
 cp "$root/app/Resources/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+cp "$root/app/Resources/install-update.sh" "$app/Contents/Resources/install-update.sh"
+chmod 755 "$app/Contents/Resources/install-update.sh"
 
 # The engine and the /sync mod, laid out like ~/.claude/shared/mods/config-sync, used before setup.
 engine="$app/Contents/Resources/engine"
@@ -47,23 +51,7 @@ chmod 755 "$engine/bin/claude-sync"
 cp "$root/engine/main.py" "$engine/engine/"
 cp "$root"/engine/claude_sync/*.py "$engine/engine/claude_sync/"
 
-# The Notion public connection for 'Notion으로 연결' (personal builds only; scripts/set-notion-oauth.sh
-# stores it in the keychain: account = client id, password = client secret). Without it the app offers
-# only the secret-key way. The secret goes through stdin, never argv.
-oauth_item=${CLAUDE_SYNC_OAUTH_ITEM:-claude-sync-notion-oauth}
-client_id=$(security find-generic-password -s "$oauth_item" 2>/dev/null | sed -n 's/.*"acct"<blob>="\(.*\)"/\1/p' || true)
-if [ -n "$client_id" ]; then
-  security find-generic-password -s "$oauth_item" -w \
-    | /usr/bin/python3 -I -c 'import json, sys; print(json.dumps({"client_id": sys.argv[1], "client_secret": sys.stdin.read().strip()}))' "$client_id" \
-    > "$app/Contents/Resources/notion-oauth.json"
-  chmod 600 "$app/Contents/Resources/notion-oauth.json"
-  echo "Notion 연결: 포함 ($client_id)"
-else
-  echo "Notion 연결: 없음 (비밀 키 방식만)"
-fi
-
 codesign --force --sign - --timestamp=none "$app"
-rm -f "$dist/ClaudeSync-$version.zip"
-(cd "$dist" && ditto -c -k --norsrc --noextattr --noacl --keepParent "Claude Sync.app" "ClaudeSync-$version.zip")
+bash "$root/scripts/make-dmg.sh" "$app" "$dist/ClaudeSync-$version.dmg"
 echo "built: $app"
-echo "zip:   $dist/ClaudeSync-$version.zip"
+echo "dmg:   $dist/ClaudeSync-$version.dmg"

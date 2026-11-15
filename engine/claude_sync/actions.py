@@ -44,9 +44,9 @@ class ActionError(RuntimeError):
 
 
 @contextmanager
-def holding(p: Paths) -> Iterator[None]:
+def holding(p: Paths, wait_seconds: float = LOCK_WAIT_SECONDS) -> Iterator[None]:
     """Every change the person asks for runs whole under this PC's sync lock."""
-    lock = Lock(p, wait_seconds=LOCK_WAIT_SECONDS)
+    lock = Lock(p, wait_seconds=wait_seconds)
     if not lock.acquire(wait=True):
         raise ActionError(t("다른 동기화가 진행 중이에요. 잠시 뒤 다시 해 주세요", "Another sync is running. Try again in a moment"))
     try:
@@ -381,3 +381,77 @@ def set_sync_mode(p: Paths, mode: str) -> State:
         s.receive_only = mode == "receive-only"
         save_state(p, s)
         return s
+
+
+def engine_version(root: str) -> Optional[str]:
+    """The version an engine folder (laid out like mods/config-sync) says it is; None for one too old to say."""
+    try:
+        with open(os.path.join(root, "engine", "claude_sync", "__init__.py"), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(r'^__version__ = "([0-9]+(?:\.[0-9]+)*)"', text, re.M)
+    return m.group(1) if m else None
+
+
+def _version_key(version: Optional[str]) -> tuple:
+    return tuple(int(x) for x in version.split(".")) if version else ()
+
+
+def _made_here(rel: str) -> bool:
+    """What each PC makes for itself in the mod folder (Claude Code's types, Python's caches)."""
+    return rel.startswith(os.path.join(".claude-plugin", "types") + os.sep) or "__pycache__" in rel.split(os.sep)
+
+
+VERSION_FILE = os.path.join("engine", "claude_sync", "__init__.py")
+
+
+def _mirror(src: str, target: str) -> None:
+    """Make `target` hold what `src` holds, file by file, keeping what each PC makes for itself. The version
+    file goes in last, after every other file and every removal, so a run cut short still says the old
+    version and is tried again."""
+    wanted = []
+    for d, dirs, names in os.walk(src):
+        dirs[:] = [x for x in dirs if x != "__pycache__"]
+        wanted += [rel for rel in (os.path.relpath(os.path.join(d, n), src) for n in names) if not _made_here(rel)]
+
+    def put(rel: str) -> None:
+        dst = os.path.join(target, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        tmp = dst + ".adopt-tmp"
+        shutil.copy2(os.path.join(src, rel), tmp)
+        os.replace(tmp, dst)
+
+    for rel in wanted:
+        if rel != VERSION_FILE:
+            put(rel)
+    keep = set(wanted)
+    for d, _, names in os.walk(target, topdown=False):
+        for name in names:
+            rel = os.path.relpath(os.path.join(d, name), target)
+            if rel not in keep and not _made_here(rel):
+                os.remove(os.path.join(d, name))
+        if d != target and not os.listdir(d):
+            os.rmdir(d)
+    put(VERSION_FILE)
+
+
+def adopt_engine(p: Paths, src: str, wait_seconds: float = LOCK_WAIT_SECONDS) -> dict:
+    """Puts the engine the app carries (`src`) into the shared repo when it is newer than the shared one,
+    so the next sync hands it to the other PCs. A receive-only PC leaves the shared repo alone."""
+    src = os.path.abspath(src)
+    new = engine_version(src)
+    if new is None or not os.path.isfile(os.path.join(src, "bin", "claude-sync")):
+        raise ActionError(t("동기화 엔진 폴더가 아니에요: %s", "Not a sync engine folder: %s") % src)
+    target = os.path.join(p.shared, "mods", "config-sync")
+    with holding(p, wait_seconds):
+        old = engine_version(target)
+        out = {"adopted": False, "from": old, "to": new}
+        if load_state(p).receive_only:
+            out["reason"] = "receive_only"
+            return out
+        if _version_key(new) <= _version_key(old):
+            return out
+        _mirror(src, target)
+        out["adopted"] = True
+        return out

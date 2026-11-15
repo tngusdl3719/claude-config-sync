@@ -47,6 +47,33 @@ private func leftovers(_ marker: String) -> String {
         #expect(status.receiveOnly)
     }
 
+    @Test func manyRunsAtOnceAllKeepTheirOutput() async throws {
+        let f = try FakeEngines()
+        let engine = try f.script("slow", #"sleep 0.3; echo "{\"pc\": \"$1\"}"; exit 1"#)
+        let runner = EngineRunner(executable: engine)
+        let outputs = await withTaskGroup(of: (Int, String).self) { group in
+            for i in 0..<100 {
+                group.addTask { (i, String(decoding: await runner.run([String(i)], timeout: 20).stdout, as: UTF8.self)) }
+            }
+            var all: [Int: String] = [:]
+            for await (i, text) in group { all[i] = text }
+            return all
+        }
+        let lost = (0..<100).filter { outputs[$0] != "{\"pc\": \"\($0)\"}\n" }
+        #expect(lost.isEmpty, "runs that lost their output: \(lost)")
+    }
+
+    @Test func theAppsEngineIsHandedToTheSharedRepo() async throws {
+        let f = try FakeEngines()
+        let engine = try f.script("adopt", #"printf '%s\n' "$@" > "$(dirname "$0")/argv"; echo '{"adopted": true, "from": null, "to": "0.6.0"}'"#)
+        let result = await EngineClient(runner: EngineRunner(executable: engine)).adoptEngine(from: "/Apps/Claude Sync.app/Contents/Resources/engine")
+        #expect(try result.get() == AdoptResult(adopted: true, from: nil, to: "0.6.0", reason: nil))
+        #expect(f.read("argv") == "adopt-engine\n/Apps/Claude Sync.app/Contents/Resources/engine\n")
+        let refused = try f.script("ro", #"echo '{"adopted": false, "from": "0.5.0", "to": "0.6.0", "reason": "receive_only"}'"#)
+        #expect(try await EngineClient(runner: EngineRunner(executable: refused)).adoptEngine(from: "/x").get().reason == "receive_only")
+        #expect(EngineLocator.sharedFolder(home: "/Users/me") == "/Users/me/.claude/shared/mods/config-sync")
+    }
+
     @Test func theEngineSpeaksTheAppsLanguage() async throws {
         let f = try FakeEngines()
         let engine = try f.script("lang", #"printf '%s' "${CLAUDE_SYNC_LANG-unset}" > "$(dirname "$0")/lang.out"; echo '{}'"#)
@@ -268,13 +295,20 @@ private func leftovers(_ marker: String) -> String {
         #expect(f.read("stdin") == token + "\n" + "ntn_x\n")
     }
 
-    @Test func connectionInfoComesFromTheAppBundle() throws {
+    @Test func connectionInfoComesFromThisMacsKeychain() throws {
         let f = try FakeEngines()
-        let file = f.dir.appendingPathComponent("notion-oauth.json")
-        try #"{"client_id": "abc", "client_secret": "secret_x"}"#.write(to: file, atomically: true, encoding: .utf8)
-        #expect(NotionOAuthClient.load(resources: f.dir.path) == NotionOAuthClient(clientID: "abc", clientSecret: "secret_x"))
-        #expect(NotionOAuthClient.load(resources: f.dir.appendingPathComponent("none").path) == nil)
-        #expect(NotionOAuthClient.load(resources: nil) == nil)
+        // Like /usr/bin/security: the item's attributes, or with -w only its secret; 44 when there is no such item.
+        let security = try f.script("security", #"""
+            [ "$2" = "-s" ] && [ "$3" = "claude-sync-notion-oauth" ] || exit 44
+            if [ "${4:-}" = "-w" ]; then echo "secret_x"; else
+              printf 'keychain: "/x/login.keychain-db"\nattributes:\n    "acct"<blob>="abc"\n    "svce"<blob>="claude-sync-notion-oauth"\n'
+            fi
+            """#)
+        #expect(NotionOAuthClient.fromKeychain(security: security) == NotionOAuthClient(clientID: "abc", clientSecret: "secret_x"))
+        #expect(NotionOAuthClient.fromKeychain(security: security, item: "none") == nil)
+        let empty = try f.script("empty-secret", #"[ "${4:-}" = "-w" ] && echo "" || echo '    "acct"<blob>="abc"'"#)
+        #expect(NotionOAuthClient.fromKeychain(security: empty) == nil)
+        #expect(NotionOAuthClient.fromKeychain(security: f.dir.appendingPathComponent("missing").path) == nil)
     }
 
     @Test func initPassesTokenOnStdinAndChoices() async throws {

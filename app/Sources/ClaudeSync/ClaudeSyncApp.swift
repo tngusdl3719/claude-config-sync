@@ -21,13 +21,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let args = ProcessInfo.processInfo.arguments
         model.start()
-        // Started at login: no window (not even setup); the menu bar and the Dock open one when asked.
-        if !Self.launchedAtLogin() {
+        // Started at login, or again after a quiet update: no window (not even setup); the menu bar and the
+        // Dock open one when asked.
+        if args.contains("--after-update") {
+            model.say(L10n.t("Claude Sync를 \(AppInfo.version)(으)로 업데이트했어요", "Updated Claude Sync to \(AppInfo.version)"))
+        } else if !Self.launchedAtLogin() {
             MainWindow.open(model)
             if !model.isConfigured { WizardWindow.open(model) }
         }
-        let args = ProcessInfo.processInfo.arguments
         // Diagnostics: the menu's content in an ordinary window, and the 지금 동기화 action run once.
         if args.contains("--menu-window") {
             Windows.show("menu", title: "Claude Sync (diagnostics)", size: NSSize(width: 410, height: 720)) {
@@ -60,6 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { await self.model.syncNow(manual: true) }
             }
         }
+    }
+
+    /// A downloaded update goes in as the app quits.
+    func applicationWillTerminate(_ notification: Notification) {
+        model.updater.installOnQuit()
     }
 
     /// Closing the window keeps the app (and automatic sync) running.

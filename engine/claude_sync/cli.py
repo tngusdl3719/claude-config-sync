@@ -48,6 +48,8 @@ def _parser() -> argparse.ArgumentParser:
     rp = sub.add_parser("register-pc")
     rp.add_argument("key")
     rp.add_argument("--admin-host", default="split")
+    ad = sub.add_parser("adopt-engine")
+    ad.add_argument("source")
     sr = sub.add_parser("set-remote")
     sr.add_argument("url", nargs="?")
     sr.add_argument("--username")
@@ -107,6 +109,8 @@ def run(args) -> object:
         if not args.url or not args.username:
             raise actions.ActionError(t("저장소 주소와 --username 이 필요해요", "The repository address and --username are needed"))
         return setup_mod.use_git(p, args.url, args.username, token)
+    if cmd == "adopt-engine":
+        return actions.adopt_engine(p, args.source)
     if cmd == "register-pc":
         return actions.register_pc(args.key, admin_host=args.admin_host)
     return setup_mod.run(p, args)

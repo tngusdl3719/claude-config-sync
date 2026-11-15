@@ -19,11 +19,17 @@ The app speaks Korean and English: **Settings → 언어 / Language**. The engin
 
 ### Install
 
-1. Download `ClaudeSync-<version>.zip`, unzip it and move `Claude Sync.app` to **Applications**.
+1. Download `ClaudeSync-<version>.dmg` from [Releases](https://github.com/tngusdl3719/claude-config-sync/releases/latest), open it and drag **Claude Sync** onto **Applications**.
 2. If macOS warns about an "unidentified developer" on first launch (the app has no Apple developer signature):
    - System Settings → **Privacy & Security** → "Claude Sync" near the bottom → **Open Anyway**, then open it again.
    - Or Control-click the app in Finder → **Open**.
 3. Icons appear in the Dock and the menu bar, and the main window opens. If this Mac is not set up yet, the setup guide comes first.
+
+### Updates
+
+The app keeps itself up to date. Once a day it asks GitHub for the latest release, downloads it, and checks its signature against the release key built into the app; anything else is not installed. It then installs the update and quietly restarts while no window is open and nothing is syncing (or when you quit it). Turn this off, check now, or install right away under **Settings → Updates**. A Mac that cannot reach GitHub (a work Mac, say) just skips the check; give it a new version by hand.
+
+An update also carries the sync engine. When the app's engine is newer than the one in your shared storage, a PC that sends puts it there, and the other PCs pick it up on their next sync (a **Receive only** PC never does this).
 
 ### First setup (the guide)
 
@@ -41,7 +47,7 @@ The app speaks Korean and English: **Settings → 언어 / Language**. The engin
 
 - Tokens and secret keys are typed into hidden fields and kept **only in this Mac's keychain**. They never go into files, logs or command arguments.
 - Every PC has to use the same storage to sync with the others. You can switch between GitLab, GitHub and Notion, or connect again, later under **Storage** in the app. If the new storage holds other history that does not continue this PC's, the move is refused and nothing changes.
-- **Connect with Notion** appears only when the build includes a Notion public connection (see *Development*). Without it, use a secret key.
+- **Connect with Notion** appears only on a Mac that has your own Notion public connection in its keychain (see *Development*). Without it, use a secret key.
 
 ### Everyday use
 
@@ -70,10 +76,13 @@ It builds with the Swift in the Command Line Tools; Xcode is not needed.
 ```bash
 app/test.sh                                  # app tests (Swift Testing)
 cd engine/tests && python3 -m unittest discover -s . -p 'test_*.py'   # engine tests
-scripts/build-app.sh                         # dist/Claude Sync.app and dist/ClaudeSync-<version>.zip (ad-hoc signed, engine inside)
+scripts/build-app.sh                         # dist/Claude Sync.app and dist/ClaudeSync-<version>.dmg (ad-hoc signed, engine inside, no secrets)
 scripts/build-installer.sh                   # dist/claude-sync-install.command
 scripts/deploy.sh                            # copy the engine and mod into the shared repo's mods/config-sync (other PCs get them on the next sync)
+scripts/release.sh                           # publish AppInfo.swift's version on GitHub: dmg, signature, installer
 ```
 
-- To include **Connect with Notion**, create a public connection in Notion (redirect URI `http://localhost:47821/callback`), store its client ID and secret in the keychain with `bash scripts/set-notion-oauth.sh`, then build the app. The secret ends up inside the app, so use such a build **only for yourself** and do not hand the app file to others.
+- **Connect with Notion**: create a public connection in Notion (redirect URI `http://localhost:47821/callback`) and store its client ID and secret in this Mac's keychain with `bash scripts/set-notion-oauth.sh`. The app reads it from the keychain when it starts; nothing secret goes into the app, so the same dmg is fine for everyone.
+- **Releasing**: the version lives in `app/Sources/ClaudeSyncCore/AppInfo.swift` (the engine's `__version__` must match; a test checks). Releases are signed with an Ed25519 key whose private half stays in the releasing Mac's keychain (`bash scripts/update-key.sh new` once; its public half is `AppInfo.updatePublicKey`). Commit, push, then run `scripts/release.sh`.
+- If you fork this, make your own update key and put its public half in `AppInfo.updatePublicKey`, and point `AppInfo.repository` at your repository; otherwise your apps will wait for releases signed with someone else's key.
 - `dist/` is not tracked by git.

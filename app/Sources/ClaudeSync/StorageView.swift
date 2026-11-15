@@ -70,7 +70,7 @@ struct StorageChangeView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     /// The app's Notion public connection; nil in a build without one (then only the secret-key way).
-    private let oauthClient = NotionOAuthClient.load(resources: Bundle.main.resourcePath)
+    private let oauthClient = NotionOAuthClient.thisMac
     @State private var kind: StorageKind = .gitlab
     private var backend: Backend { kind.backend }
     @State private var repoText = ""
