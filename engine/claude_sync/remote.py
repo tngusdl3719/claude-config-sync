@@ -7,6 +7,7 @@ import subprocess
 from typing import Callable, Optional, Tuple
 from urllib.parse import quote, unquote
 
+from .lang import t
 from .gitio import git
 from .paths import Paths
 
@@ -44,13 +45,13 @@ def guarded_helper() -> str:
 
 def _validate(url: str, username: str) -> str:
     if not USER_RE.match(username or ""):
-        raise RemoteError("배포 토큰 사용자 이름이 올바르지 않아요: %r" % username)
+        raise RemoteError(t("배포 토큰 사용자 이름이 올바르지 않아요: %r", "Not a valid token user name: %r") % username)
     m = URL_RE.match(url or "")
     if m:
         return "https://%s@%s/%s" % (quote(username, safe="+._-"), m.group(1), m.group(2))
     if _test_mode() and FILE_RE.match(url or ""):
         return url
-    raise RemoteError("https://호스트/경로.git 형태의 주소가 필요해요: %s" % url)
+    raise RemoteError(t("https://호스트/경로.git 형태의 주소가 필요해요: %s", "An address like https://host/path.git is needed: %s") % url)
 
 
 def normalized(url: str, username: str) -> str:
@@ -85,13 +86,13 @@ def _fields(url_with_user: str, username: Optional[str]) -> Tuple[str, str, str]
     f = FILE_RE.match(url_with_user)
     if f and _test_mode() and username:
         return TEST_HOST, f.group(1), username
-    raise RemoteError("토큰을 저장할 주소가 올바르지 않아요")
+    raise RemoteError(t("토큰을 저장할 주소가 올바르지 않아요", "Not a valid address to keep the token for"))
 
 
 def store_token(p: Paths, url_with_user: str, token: str, runner: Callable = subprocess.run,
                 username: Optional[str] = None) -> dict:
     if not token or "\n" in token:
-        raise RemoteError("토큰이 비어 있거나 올바르지 않아요")
+        raise RemoteError(t("토큰이 비어 있거나 올바르지 않아요", "The token is empty or not valid"))
     host, path, user = _fields(url_with_user, username)
     data = "protocol=https\nhost=%s\npath=%s\nusername=%s\npassword=%s\n\n" % (host, path, user, token)
     argv = ["git", "-c", "credential.helper=", "-c", "credential.helper=%s" % helper(),
@@ -99,7 +100,7 @@ def store_token(p: Paths, url_with_user: str, token: str, runner: Callable = sub
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
     r = runner(argv, input=data, cwd=p.shared, capture_output=True, text=True, env=env)
     if r.returncode != 0:
-        raise RemoteError("토큰을 키체인에 저장하지 못했어요")
+        raise RemoteError(t("토큰을 키체인에 저장하지 못했어요", "Could not save the token in the keychain"))
     return {"stored": True, "host": host, "username": user}
 
 
@@ -130,5 +131,5 @@ def set_remote(p: Paths, url: str, username: str, token: str) -> dict:
     out = {"remote": target, "ok": r.returncode == 0}
     if r.returncode != 0:
         lines = (r.stderr or "").strip().splitlines()
-        out["error"] = lines[-1][:300] if lines else "저장소에 연결하지 못했어요"
+        out["error"] = lines[-1][:300] if lines else t("저장소에 연결하지 못했어요", "Could not reach the repository")
     return out

@@ -7,6 +7,7 @@ import os
 import sys
 from dataclasses import asdict
 
+from .lang import t
 from . import actions, remote, report
 from . import setup as setup_mod
 from .paths import Paths
@@ -104,7 +105,7 @@ def run(args) -> object:
             return setup_mod.use_notion(p, args.page or "", setup_mod.stdin_secret())
         token = setup_mod.stdin_secret()
         if not args.url or not args.username:
-            raise actions.ActionError("저장소 주소와 --username 이 필요해요")
+            raise actions.ActionError(t("저장소 주소와 --username 이 필요해요", "The repository address and --username are needed"))
         return setup_mod.use_git(p, args.url, args.username, token)
     if cmd == "register-pc":
         return actions.register_pc(args.key, admin_host=args.admin_host)

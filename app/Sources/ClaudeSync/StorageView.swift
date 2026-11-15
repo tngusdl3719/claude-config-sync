@@ -85,7 +85,7 @@ struct StorageChangeView: View {
     @State private var problem: String?
 
     private var signingIn: Bool { backend == .notion && oauthClient != nil && !useSecretKey }
-    /// The git host the token help is for: the address typed, else the tab chosen.
+    /// The git host the help (new repository, token) is for: the address typed, else the tab chosen.
     private var gitKind: StorageKind { StorageKind.forAddress(repoText, chosen: kind) }
 
     var body: some View {
@@ -140,7 +140,7 @@ struct StorageChangeView: View {
 
     private var gitFields: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if mode == .move && kind == .github {
+            if mode == .move && gitKind == .github {
                 Text(LocalizedStringKey(L10n.t("GitHub의 **비공개** 저장소 주소예요. 비어 있거나 README만 있는 새 저장소(.gitignore·라이선스 템플릿 없이), 또는 다른 PC가 이미 쓰는 저장소로 옮길 수 있어요.",
                                                 "The address of a **private** GitHub repository: a new one (empty or with only a README; no .gitignore or license template), or the one other PCs already use.")))
                     .font(.callout)

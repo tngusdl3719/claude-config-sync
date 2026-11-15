@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from .lang import t
 from .gitio import git, head
 from .notion import (DELTA_NAME, FULL_NAME, OAUTH_ERRORS, Client, NotionError, authorize_url, files, oauth_token,
                      page_id, plain, rich, select, text, title)
@@ -35,14 +36,15 @@ FULL_EVERY = 30
 FULL, DELTA = FULL_NAME, DELTA_NAME
 REMOTE_REF = "refs/remotes/origin/main"
 ROW_REFS = "refs/notion/"
-MOVED = "다른 PC가 먼저 올렸어요. 다음 동기화에서 합쳐 올려요"
+MOVED = ("다른 PC가 먼저 올렸어요. 다음 동기화에서 합쳐 올려요", "Another PC uploaded first. The next sync merges and uploads")
 # Signing in with Notion (spec §7): the fixed local address registered as the connection's redirect URI.
 OAUTH_PORT = 47821
 OAUTH_CLIENT, OAUTH_REFRESH = "oauth/client", "oauth/refresh"
 # A sign-in not yet tied to a page keeps its own trio, so the pair a working sync uses stays intact.
 OAUTH_PENDING, PENDING_REFRESH, PENDING_CLIENT = "oauth/pending", "oauth/pending-refresh", "oauth/pending-client"
 CALLBACK_READ_SECONDS = 5
-RECONNECT = "Notion 연결이 끊겼어요. 앱에서 'Notion으로 연결'을 다시 해 주세요"
+RECONNECT = ("Notion 연결이 끊겼어요. 앱에서 'Notion으로 연결'을 다시 해 주세요",
+             "The Notion connection is broken. Use 'Connect with Notion' in the app again")
 PROPERTIES = {
     "요약": {"title": {}},
     "PC": {"rich_text": {}},
@@ -72,10 +74,10 @@ def _credential(p: Paths, action: str, page: str, secret: Optional[str] = None) 
 
 def save_secret(p: Paths, page: str, secret: str) -> None:
     if not secret or "\n" in secret:
-        raise NotionError(0, "bad_secret", "Notion 비밀 키가 비어 있거나 올바르지 않아요")
+        raise NotionError(0, "bad_secret", t("Notion 비밀 키가 비어 있거나 올바르지 않아요", "The Notion secret key is empty or not valid"))
     # 'approve' succeeds even when the helper kept nothing (e.g. the keychain was out of reach): read it back.
     if _credential(p, "approve", page, secret).returncode != 0 or _stored(p, page) != secret:
-        raise NotionError(0, "keychain", "Notion 비밀 키를 키체인에 저장하지 못했어요")
+        raise NotionError(0, "keychain", t("Notion 비밀 키를 키체인에 저장하지 못했어요", "Could not save the Notion secret key in the keychain"))
 
 
 def _stored(p: Paths, page: str) -> Optional[str]:
@@ -92,7 +94,7 @@ def _backup(p: Paths, key: str) -> Optional[str]:
     """What the key holds now (None: nothing). Raises when the keychain cannot tell, so nothing is changed."""
     r = _credential(p, "fill", key)
     if r.stderr == KEYCHAIN_SILENT:
-        raise NotionError(0, "keychain", "키체인이 응답하지 않아 아무것도 바꾸지 않았어요. 잠시 뒤 다시 하세요")
+        raise NotionError(0, "keychain", t("키체인이 응답하지 않아 아무것도 바꾸지 않았어요. 잠시 뒤 다시 하세요", "The keychain did not answer, so nothing was changed. Try again in a moment"))
     for line in r.stdout.splitlines() if r.returncode == 0 else []:
         if line.startswith("password="):
             return line[len("password="):]
@@ -119,7 +121,7 @@ def load_secret(p: Paths, page: str) -> str:
     for line in r.stdout.splitlines() if r.returncode == 0 else []:
         if line.startswith("password="):
             return line[len("password="):]
-    raise NotionError(401, "no_secret", "이 Mac 키체인에 Notion 비밀 키가 없어요. 설정에서 비밀 키를 다시 넣어 주세요")
+    raise NotionError(401, "no_secret", t("이 Mac 키체인에 Notion 비밀 키가 없어요. 설정에서 비밀 키를 다시 넣어 주세요", "This Mac's keychain has no Notion secret key. Enter the secret key again in the settings"))
 
 
 # --- setting up a PC ---
@@ -136,7 +138,7 @@ def pending_token(p: Paths) -> str:
     try:
         return load_secret(p, OAUTH_PENDING)
     except NotionError:
-        raise NotionError(401, "no_login", "먼저 앱에서 'Notion으로 연결'을 해 주세요") from None
+        raise NotionError(401, "no_login", t("먼저 앱에서 'Notion으로 연결'을 해 주세요", "Use 'Connect with Notion' in the app first")) from None
 
 
 def _open_browser(url: str) -> None:
@@ -144,7 +146,9 @@ def _open_browser(url: str) -> None:
 
 
 CALLBACK_PAGE = ("<!doctype html><meta charset=utf-8><title>Claude Sync</title>"
-                 "<p style='font:16px -apple-system'>Notion 연결을 받았어요. 이 창을 닫고 Claude Sync로 돌아가세요.</p>")
+                 "<p style='font:16px -apple-system'>%s</p>")
+CALLBACK_TEXT = ("Notion 연결을 받았어요. 이 창을 닫고 Claude Sync로 돌아가세요.",
+                 "Notion is connected. Close this window and go back to Claude Sync.")
 
 
 def sign_in_record(p: Paths) -> str:
@@ -229,10 +233,13 @@ def _listen(p: Paths, port: int, make: Callable[[], HTTPServer]) -> HTTPServer:
             except OSError:
                 time.sleep(0.2)
     if holder:
-        why = "Notion 연결에 쓰는 %d번 포트를 다른 프로그램(%s)이 쓰고 있어요." % (port, holder[2] or "?")
+        why = t("Notion 연결에 쓰는 %d번 포트를 다른 프로그램(%s)이 쓰고 있어요.",
+                "Port %d, which the Notion connection uses, is taken by another program (%s).") % (port, holder[2] or "?")
     else:
-        why = "Notion 연결에 쓰는 %d번 포트를 다른 프로그램이 쓰고 있어요(터미널에서 lsof -iTCP:%d 로 확인)." % (port, port)
-    raise NotionError(0, "port_busy", why + " 그 프로그램을 끈 뒤 다시 하거나, '비밀 키로 연결하기'로 연결하세요.")
+        why = t("Notion 연결에 쓰는 %d번 포트를 다른 프로그램이 쓰고 있어요(터미널에서 lsof -iTCP:%d 로 확인).",
+                "Port %d, which the Notion connection uses, is taken by another program (see it with lsof -iTCP:%d in Terminal).") % (port, port)
+    raise NotionError(0, "port_busy", why + t(" 그 프로그램을 끈 뒤 다시 하거나, '비밀 키로 연결하기'로 연결하세요.",
+                                                  " Quit that program and try again, or connect with 'Use a secret key instead'."))
 
 
 def login(p: Paths, client_id: str, client_secret: str, *, open_url: Optional[Callable[[str], None]] = None,
@@ -240,7 +247,7 @@ def login(p: Paths, client_id: str, client_secret: str, *, open_url: Optional[Ca
     """Sign in with Notion: consent in the browser, the code comes back to this Mac, tokens go to
     the keychain. Returns the pages the person shared (to pick the sync page from)."""
     if not client_id or not client_secret:
-        raise NotionError(0, "no_client", "Notion 공개 연결 정보가 없어요")
+        raise NotionError(0, "no_client", t("Notion 공개 연결 정보가 없어요", "No Notion public connection details"))
     state = secrets.token_urlsafe(24)
     answer: dict = {}
 
@@ -258,7 +265,7 @@ def login(p: Paths, client_id: str, client_secret: str, *, open_url: Optional[Ca
                 self.end_headers()
                 return
             answer.setdefault("query", query)
-            data = CALLBACK_PAGE.encode()
+            data = (CALLBACK_PAGE % t(*CALLBACK_TEXT)).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
@@ -283,14 +290,14 @@ def login(p: Paths, client_id: str, client_secret: str, *, open_url: Optional[Ca
         _forget_sign_in(p)
     query = answer.get("query")
     if query is None:
-        raise NotionError(0, "timeout", "Notion 연결을 기다리는 시간이 지났어요. 다시 시도하세요")
+        raise NotionError(0, "timeout", t("Notion 연결을 기다리는 시간이 지났어요. 다시 시도하세요", "Waiting for the Notion connection timed out. Try again"))
     if not secrets.compare_digest(query.get("state", ""), state):
-        raise NotionError(0, "bad_state", "Notion에서 돌아온 응답을 확인하지 못했어요. 다시 시도하세요")
+        raise NotionError(0, "bad_state", t("Notion에서 돌아온 응답을 확인하지 못했어요. 다시 시도하세요", "Could not verify Notion's answer. Try again"))
     if "error" in query:
         if query["error"] == "access_denied":
-            raise NotionError(0, "access_denied", "Notion 연결을 취소했어요")
+            raise NotionError(0, "access_denied", t("Notion 연결을 취소했어요", "The Notion connection was cancelled"))
         shown = query["error"] if query["error"] in OAUTH_ERRORS else "unknown"
-        raise NotionError(0, "oauth_error", "Notion 연결에 실패했어요: %s" % shown)
+        raise NotionError(0, "oauth_error", t("Notion 연결에 실패했어요: %s", "Could not connect to Notion: %s") % shown)
     tokens = oauth_token(client_id, client_secret, {"grant_type": "authorization_code", "code": query.get("code", ""),
                                                     "redirect_uri": redirect})
     save_secret(p, PENDING_CLIENT, "%s %s" % (client_id, client_secret))
@@ -305,12 +312,12 @@ def _refresh(p: Paths, s: State) -> None:
         client_id, client_secret = load_secret(p, OAUTH_CLIENT).split(" ", 1)
         refresh = load_secret(p, OAUTH_REFRESH)
     except (NotionError, ValueError):
-        raise NotionError(401, "reconnect", RECONNECT) from None
+        raise NotionError(401, "reconnect", t(*RECONNECT)) from None
     try:
         tokens = oauth_token(client_id, client_secret, {"grant_type": "refresh_token", "refresh_token": refresh})
     except NotionError as e:
         if e.status in (400, 401):
-            raise NotionError(401, "reconnect", RECONNECT) from None
+            raise NotionError(401, "reconnect", t(*RECONNECT)) from None
         raise
     save_secret(p, OAUTH_REFRESH, tokens["refresh_token"])  # the old one no longer works
     save_secret(p, s.notion_page_id or "", tokens["access_token"])
@@ -327,7 +334,8 @@ def _signed_in(p: Paths, s: State, work: Callable[[], Optional[str]]) -> Optiona
     return work()
 
 
-OTHER_HISTORY = "이 페이지에는 이 PC와 이어지지 않는 다른 공용 설정이 있어요. 빈 페이지나 이 PC들이 쓰는 페이지를 고르세요"
+OTHER_HISTORY = ("이 페이지에는 이 PC와 이어지지 않는 다른 공용 설정이 있어요. 빈 페이지나 이 PC들이 쓰는 페이지를 고르세요",
+                 "This page holds other shared settings that do not continue this PC's. Choose an empty page or the one these PCs use")
 
 
 def check_move(p: Paths, page_text: str, secret: str, *, receive_only: bool) -> None:
@@ -338,7 +346,7 @@ def check_move(p: Paths, page_text: str, secret: str, *, receive_only: bool) -> 
     ds = find_data_source(c, page)
     if ds is None:
         if receive_only:
-            raise NotionError(404, "no_database", "이 페이지에는 아직 공용 설정이 없어요. 올리는 PC를 먼저 이 페이지로 옮기세요")
+            raise NotionError(404, "no_database", t("이 페이지에는 아직 공용 설정이 없어요. 올리는 PC를 먼저 이 페이지로 옮기세요", "This page has no shared settings yet. Move a PC that uploads to this page first"))
         return
     rows = window(c, ds)
     if not rows:
@@ -347,9 +355,9 @@ def check_move(p: Paths, page_text: str, secret: str, *, receive_only: bool) -> 
         absorb(p, c, rows)
         theirs, current = tip(p, rows), head(p)
         if theirs is None:
-            raise NotionError(409, "unreadable", "이 페이지의 공용 설정을 받지 못했어요. 잠시 뒤 다시 하세요")
+            raise NotionError(409, "unreadable", t("이 페이지의 공용 설정을 받지 못했어요. 잠시 뒤 다시 하세요", "Could not fetch this page's shared settings. Try again in a moment"))
         if current and not git(p, "merge-base", theirs, current, check=False).stdout.strip():
-            raise NotionError(409, "other_history", OTHER_HISTORY)
+            raise NotionError(409, "other_history", t(*OTHER_HISTORY))
     finally:
         for name in git(p, "for-each-ref", "--format=%(refname)", ROW_REFS).stdout.split():
             git(p, "update-ref", "-d", name, check=False)
@@ -362,10 +370,10 @@ def connect(p: Paths, s: State, page_text: str, secret: str, *, create: bool, re
     c = Client(secret)
     ds = find_data_source(c, page)
     if ds is not None and require_empty and c.query(ds, page_size=1, limit=1):
-        raise NotionError(409, "not_empty", "이 페이지에는 이미 공용 설정이 있어요. '다른 PC 연결'로 설정하세요")
+        raise NotionError(409, "not_empty", t("이 페이지에는 이미 공용 설정이 있어요. '다른 PC 연결'로 설정하세요", "This page already holds shared settings. Set this PC up with 'Receive another PC's settings'"))
     if ds is None:
         if not create:
-            raise NotionError(404, "no_database", "아직 첫 PC 설정이 없어요. 첫 PC에서 먼저 설정하세요")
+            raise NotionError(404, "no_database", t("아직 첫 PC 설정이 없어요. 첫 PC에서 먼저 설정하세요", "No first PC yet. Set up the first PC first"))
         _, ds = c.create_database(page, DB_TITLE, PROPERTIES)
     # The sign-in now belongs to this page: it becomes the pair refreshes use.
     new = {page: secret}
@@ -391,7 +399,7 @@ def connect(p: Paths, s: State, page_text: str, secret: str, *, create: bool, re
 
 def _client(p: Paths, s: State) -> Tuple[Client, str]:
     if not s.notion_page_id or not s.notion_data_source_id:
-        raise NotionError(0, "not_set", "Notion 저장소 설정이 없어요. 설정을 다시 하세요")
+        raise NotionError(0, "not_set", t("Notion 저장소 설정이 없어요. 설정을 다시 하세요", "No Notion storage settings. Set up again"))
     return Client(load_secret(p, s.notion_page_id)), s.notion_data_source_id
 
 
@@ -544,7 +552,7 @@ def _push(p: Paths, s: State, remote: Optional[str], current: str) -> Optional[s
     c, ds = _client(p, s)
     rows = window(c, ds)
     if _moved_since(p, c, rows, remote):
-        return MOVED
+        return t(*MOVED)
     full = _needs_full(p, rows, remote)
     os.makedirs(p.sync_dir, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="notion-", dir=p.sync_dir)

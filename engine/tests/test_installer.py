@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 
@@ -146,6 +147,18 @@ class HttpsInstallerTest(TempCase):
         self.assertIn("서버 연결 확인 중", r.stdout)
         self.assertIn("https 주소로", r.stderr)
 
+    def test_a_whole_install_in_english_has_no_korean(self):
+        remote, _ = self._first_pc()
+        helper, _ = _fake_helper(self.root)
+        b_home = make_home(self.root, "b")
+        env = dict(os.environ, HOME=b_home, CLAUDE_SYNC_REMOTE="file://%s" % remote, CLAUDE_SYNC_TEST_HTTPS_LIKE="1",
+                   CLAUDE_SYNC_TOKEN=TOKEN, CLAUDE_SYNC_CREDENTIAL_HELPER=helper, CLAUDE_SYNC_NONINTERACTIVE="1",
+                   CLAUDE_SYNC_PC="pc-b", CLAUDE_SYNC_WORDS="corp", CLAUDE_SYNC_RECEIVE_ONLY="1", CLAUDE_SYNC_LANG="en")
+        r = subprocess.run(["bash", INSTALLER], capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Done", r.stdout)
+        self.assertIsNone(HANGUL.search(r.stdout + r.stderr), r.stdout + r.stderr)
+
     def _ssh_install(self, remote, **extra):
         b_home = make_home(self.root, "b")
         env = {k: v for k, v in os.environ.items() if k != "CLAUDE_SYNC_SSH_HOST"}
@@ -153,23 +166,22 @@ class HttpsInstallerTest(TempCase):
                    CLAUDE_SYNC_NONINTERACTIVE="1", CLAUDE_SYNC_PC="pc-b", **extra)
         r = subprocess.run(["bash", INSTALLER], capture_output=True, text=True, env=env, timeout=60)
         config = os.path.join(b_home, ".ssh", "config")
-        return r, _read(config) if os.path.exists(config) else ""
+        return r, _read(config) if os.path.exists(config) else "", b_home
 
     def test_the_sync_server_address_comes_from_the_person(self):
-        r, config = self._ssh_install("claude-sync-server:claude-config.git", CLAUDE_SYNC_SSH_HOST="192.0.2.7")
+        r, config, _ = self._ssh_install("claude-sync-server:claude-config.git", CLAUDE_SYNC_SSH_HOST="192.0.2.7")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("서버에 연결할 수 없습니다", r.stderr)
         self.assertIn("Host claude-sync-server\n  HostName 192.0.2.7\n", config)
 
     def test_no_sync_server_address_stops_before_writing_the_ssh_config(self):
-        r, config = self._ssh_install("claude-sync-server:claude-config.git")
+        r, _, home = self._ssh_install("claude-sync-server:claude-config.git")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("CLAUDE_SYNC_SSH_HOST", r.stderr)
-        self.assertNotIn("claude-sync-server", config)
-        self.assertNotIn("HostName", config)
+        self.assertFalse(os.path.exists(os.path.join(home, ".ssh")), "no key or ssh config before the address")
 
     def test_other_ssh_addresses_leave_the_ssh_config_alone(self):
-        r, config = self._ssh_install("git@github.com:me/claude-config.git")
+        r, config, _ = self._ssh_install("git@github.com:me/claude-config.git")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("서버에 연결할 수 없습니다", r.stderr)
         self.assertNotIn("claude-sync-server", config)
@@ -242,3 +254,64 @@ class HttpsInstallerTest(TempCase):
         self.assertEqual(pushed.strip(), local_head.strip())
         self.assertIn("password=%s" % TOKEN, _read(log).splitlines())
         self.assertNotIn(TOKEN, _read(os.path.join(a.shared, ".git", "config")))
+
+
+HANGUL = re.compile("[가-힣]")
+# A pair in either language: t "한국어" "English" (bash) or T("한국어", "English") (the Python inside).
+PAIR = re.compile(r'''\bt "((?:[^"\\]|\\.)*)" "((?:[^"\\]|\\.)*)"|\bT\("((?:[^"\\]|\\.)*)", "((?:[^"\\]|\\.)*)"\)''')
+ANSWERS = "y|Y|yes|YES|예|네"  # what a person may type, in either language
+
+
+class InstallerLanguageTest(TempCase):
+    def _bad_pc_name(self, **extra):
+        """Stops at the PC name check, after the header: enough to hear which language it speaks."""
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_SYNC_LANG"}
+        env.update(HOME=make_home(self.root, "b"), CLAUDE_SYNC_REMOTE="https://example.test/me/c.git",
+                   CLAUDE_SYNC_PC="bad name", CLAUDE_SYNC_NONINTERACTIVE="1", **extra)
+        r = subprocess.run(["bash", INSTALLER], capture_output=True, text=True, env=env, timeout=60)
+        self.assertNotEqual(r.returncode, 0)
+        return r.stdout + r.stderr
+
+    def _fake_defaults(self, app, mac):
+        """A `defaults` that answers the app's language choice (or has none) and the Mac's languages."""
+        fakebin = os.path.join(self.root, "fakebin-%s-%s" % (app or "none", mac))
+        os.makedirs(fakebin)
+        write(os.path.join(fakebin, "defaults"),
+              '#!/bin/bash\n'
+              'case "$*" in\n'
+              '  "read com.suhyeon.claudesync appLanguage") %s ;;\n'
+              '  "read -g AppleLanguages") printf \'(\\n    "%s",\\n    "en-US"\\n)\\n\' ;;\n'
+              '  *) exit 1 ;;\n'
+              'esac\n' % ("echo %s" % app if app else "exit 1", mac))
+        os.chmod(os.path.join(fakebin, "defaults"), 0o755)
+        return fakebin + ":" + os.environ["PATH"]
+
+    def test_every_korean_line_has_an_english_twin(self):
+        problems = []
+        with open(INSTALLER, encoding="utf-8") as f:
+            for n, line in enumerate(f, 1):
+                if line.lstrip().startswith("#") or not HANGUL.search(line):
+                    continue
+                for m in PAIR.finditer(line):
+                    english = m.group(2) if m.group(2) is not None else m.group(4)
+                    if HANGUL.search(english) or not english.strip():
+                        problems.append("%d no English: %s" % (n, line.strip()))
+                rest = PAIR.sub("", line).replace(ANSWERS, "")
+                rest = re.sub(r"\s#\s.*$", "", rest)  # a comment after the code
+                if HANGUL.search(rest):
+                    problems.append("%d Korean only: %s" % (n, line.strip()))
+        self.assertEqual(problems, [])
+
+    def test_language_asked_for_comes_first(self):
+        english = self._bad_pc_name(CLAUDE_SYNC_LANG="en", PATH=self._fake_defaults("ko", "ko-KR"))
+        self.assertIn("A PC name", english)
+        self.assertIsNone(HANGUL.search(english), english)
+        korean = self._bad_pc_name(CLAUDE_SYNC_LANG="ko", PATH=self._fake_defaults("en", "en-US"))
+        self.assertIn("PC 이름은", korean)
+
+    def test_without_a_choice_the_apps_language_then_the_macs(self):
+        self.assertIn("A PC name", self._bad_pc_name(PATH=self._fake_defaults("en", "ko-KR")))
+        self.assertIn("PC 이름은", self._bad_pc_name(PATH=self._fake_defaults("ko", "en-US")))
+        self.assertIn("PC 이름은", self._bad_pc_name(PATH=self._fake_defaults(None, "ko-KR")))
+        self.assertIn("A PC name", self._bad_pc_name(PATH=self._fake_defaults(None, "ja-JP")))
+

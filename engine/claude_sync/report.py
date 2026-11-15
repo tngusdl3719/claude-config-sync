@@ -8,6 +8,7 @@ import time
 from typing import Dict, List, Optional, Set
 from urllib.parse import unquote
 
+from .lang import t
 from .approval import commits_between
 from .blocklist import load_words
 from .gitio import git, head, ref
@@ -248,10 +249,10 @@ def diff(p: Paths, item: str) -> dict:
     mb = _merge_base(p, current, remote)
     parts = []
     if remote and mb and remote != mb:
-        parts.append(("받을 변경", git(p, "diff", "--no-color", mb, remote, "--", *paths).stdout))
+        parts.append((t("받을 변경", "Incoming changes"), git(p, "diff", "--no-color", mb, remote, "--", *paths).stdout))
     if current and mb and current != mb:
-        parts.append(("보낼 변경", git(p, "diff", "--no-color", mb, current, "--", *paths).stdout))
+        parts.append((t("보낼 변경", "Outgoing changes"), git(p, "diff", "--no-color", mb, current, "--", *paths).stdout))
     if current:
-        parts.append(("아직 정리 안 된 변경", git(p, "diff", "--no-color", "HEAD", "--", *paths).stdout))
+        parts.append((t("아직 정리 안 된 변경", "Changes not settled yet"), git(p, "diff", "--no-color", "HEAD", "--", *paths).stdout))
     text = "\n".join("## %s\n%s" % (title, body) for title, body in parts if body.strip())
     return {"text": text}

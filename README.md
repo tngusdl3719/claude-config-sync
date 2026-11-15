@@ -15,7 +15,7 @@ Keeps the Claude Code setup of several Macs in step, but **only the parts you ma
 
 ## The Mac app (Claude Sync)
 
-The app speaks Korean and English: **Settings → 언어 / Language**. Messages that come from the engine, and the Terminal installer, are in Korean for now.
+The app speaks Korean and English: **Settings → 언어 / Language**. The engine's messages follow the same choice. (`/sync` inside Claude Code is in Korean for now.)
 
 ### Install
 
@@ -60,6 +60,8 @@ bash ~/Downloads/claude-sync-install.command
 ```
 
 An `https://` repository address connects with an access token; choosing Notion connects with a secret key. For a self-hosted SSH server (`claude-sync-server:…` addresses) it asks for the server's address, which you can also give as `CLAUDE_SYNC_SSH_HOST`.
+
+The installer speaks the language chosen in the Claude Sync app, or the Mac's language when the app has no choice yet (Korean for Korean, English otherwise). To pick one, run it as `CLAUDE_SYNC_LANG=en bash …` or `CLAUDE_SYNC_LANG=ko bash …`.
 
 ## Development
 

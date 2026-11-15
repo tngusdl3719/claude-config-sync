@@ -18,15 +18,19 @@ public struct EngineRunner: Sendable {
 
     public func run(_ args: [String], stdin: String? = nil, timeout: TimeInterval) async -> EngineOutput {
         let executable = self.executable
+        let language = L10n.current  // taken here: the detached task below does not see the caller's
         return await Task.detached(priority: .userInitiated) {
-            Self.runBlocking(executable: executable, args: args, stdin: stdin, timeout: timeout)
+            Self.runBlocking(executable: executable, args: args, stdin: stdin, timeout: timeout, language: language)
         }.value
     }
 
-    private static func runBlocking(executable: String, args: [String], stdin: String?, timeout: TimeInterval) -> EngineOutput {
+    private static func runBlocking(executable: String, args: [String], stdin: String?, timeout: TimeInterval,
+                                    language: AppLanguage) -> EngineOutput {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
         process.arguments = ["-e", "setpgrp(0, 0); exec @ARGV or exit 127", "--", executable] + args
+        // The engine's messages in the app's language.
+        process.environment = ProcessInfo.processInfo.environment.merging(["CLAUDE_SYNC_LANG": language.rawValue]) { $1 }
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err

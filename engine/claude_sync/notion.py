@@ -12,6 +12,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from .lang import t
+
 VERSION = "2026-03-11"
 FULL_NAME, DELTA_NAME = "전체본", "변경분"
 DEFAULT_BASE = "https://api.notion.com"
@@ -33,7 +35,7 @@ def page_id(text: str) -> str:
     """The 32-hex page id inside a Notion page address or a (dashed) id."""
     found = ID_RE.findall((text or "").split("?")[0].split("#")[0])
     if not found:
-        raise NotionError(0, "bad_page", "Notion 페이지 주소에서 페이지 id를 찾지 못했어요")
+        raise NotionError(0, "bad_page", t("Notion 페이지 주소에서 페이지 id를 찾지 못했어요", "No page id in the Notion page address"))
     return found[-1].replace("-", "").lower()
 
 
@@ -83,8 +85,10 @@ def authorize_url(client_id: str, redirect_uri: str, state: str, base: Optional[
 OAUTH_ERRORS = {"invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type",
                 "invalid_scope", "access_denied", "server_error", "temporarily_unavailable"}
 OAUTH_MESSAGES = {
-    "invalid_grant": "Notion 연결이 만료됐어요. 'Notion으로 연결'을 다시 해 주세요",
-    "invalid_client": "Notion 공개 연결 정보(client id/secret)가 맞지 않아요",
+    "invalid_grant": ("Notion 연결이 만료됐어요. 'Notion으로 연결'을 다시 해 주세요",
+                      "The Notion connection expired. Use 'Connect with Notion' again"),
+    "invalid_client": ("Notion 공개 연결 정보(client id/secret)가 맞지 않아요",
+                       "The Notion public connection details (client id/secret) do not match"),
 }
 
 
@@ -100,7 +104,7 @@ def oauth_token(client_id: str, client_secret: str, body: dict, base: Optional[s
                                  headers=headers), timeout=TIMEOUT) as r:
                 out = json.loads(r.read() or b"{}")
             if not out.get("access_token") or not out.get("refresh_token"):
-                raise NotionError(0, "bad_token", "Notion이 토큰을 주지 않았어요")
+                raise NotionError(0, "bad_token", t("Notion이 토큰을 주지 않았어요", "Notion gave no token"))
             return out
         except HTTPError as e:
             if e.code == 429 and attempt < RETRIES:
@@ -112,10 +116,11 @@ def oauth_token(client_id: str, client_secret: str, body: dict, base: Optional[s
                 raw = None
             code = raw if raw in OAUTH_ERRORS else "http_%d" % e.code
             # Fixed texts only: the response could echo the secret or a token.
-            raise NotionError(e.code, code, OAUTH_MESSAGES.get(code, "Notion 연결에 실패했어요 (%d %s)" % (e.code, code))) \
+            raise NotionError(e.code, code, t(*OAUTH_MESSAGES[code]) if code in OAUTH_MESSAGES
+                              else t("Notion 연결에 실패했어요 (%d %s)", "Could not connect to Notion (%d %s)") % (e.code, code)) \
                 from None
         except (URLError, OSError, ValueError) as e:
-            raise NotionError(0, "offline", "Notion에 연결하지 못했어요: %s" % _reason(e).replace(client_secret, "***")[:200]) \
+            raise NotionError(0, "offline", t("Notion에 연결하지 못했어요: %s", "Could not reach Notion: %s") % _reason(e).replace(client_secret, "***")[:200]) \
                 from None
     raise NotionError(429, "rate_limited")  # not reached
 
@@ -133,7 +138,7 @@ class Client:
                 data: Optional[bytes] = None, content_type: str = "application/json") -> dict:
         # Checked before anything is sent: a malformed key would otherwise be echoed by header errors.
         if not SECRET_RE.match(self._secret or ""):
-            raise NotionError(0, "bad_secret", "Notion 비밀 키 형식이 올바르지 않아요. 공백·줄바꿈 없이 다시 붙여 넣어 주세요")
+            raise NotionError(0, "bad_secret", t("Notion 비밀 키 형식이 올바르지 않아요. 공백·줄바꿈 없이 다시 붙여 넣어 주세요", "The Notion secret key is not in the right form. Paste it again without spaces or line breaks"))
         if body is not None:
             data = json.dumps(body).encode()
         headers = {"Authorization": "Bearer " + self._secret, "Notion-Version": VERSION}
@@ -153,7 +158,7 @@ class Client:
                 err = _error(e)
                 raise NotionError(err.status, err.code, self._scrub(str(err))[:300]) from None
             except (URLError, OSError, ValueError) as e:
-                raise NotionError(0, "offline", "Notion에 연결하지 못했어요: %s" % self._scrub(_reason(e))[:200]) from None
+                raise NotionError(0, "offline", t("Notion에 연결하지 못했어요: %s", "Could not reach Notion: %s") % self._scrub(_reason(e))[:200]) from None
         raise NotionError(429, "rate_limited")  # not reached
 
     def children(self, block_id: str) -> List[dict]:
@@ -198,7 +203,7 @@ class Client:
         r = self.request("GET", "/v1/databases/%s" % plain(database))
         sources = r.get("data_sources") or []
         if not sources:
-            raise NotionError(404, "no_data_source", "데이터베이스에 데이터 소스가 없어요")
+            raise NotionError(404, "no_data_source", t("데이터베이스에 데이터 소스가 없어요", "The database has no data source"))
         return plain(sources[0]["id"])
 
     def query(self, data_source: str, *, descending: bool = False, page_size: int = 100,
@@ -244,9 +249,9 @@ class Client:
             with urlopen(Request(url, method="GET"), timeout=TIMEOUT) as r:
                 return r.read()
         except HTTPError as e:
-            raise NotionError(e.code, "download_failed", "첨부 파일을 받지 못했어요 (%d)" % e.code) from None
+            raise NotionError(e.code, "download_failed", t("첨부 파일을 받지 못했어요 (%d)", "Could not download the attachment (%d)") % e.code) from None
         except (URLError, OSError) as e:
-            raise NotionError(0, "offline", "첨부 파일을 받지 못했어요: %s" % _reason(e)[:200]) from None
+            raise NotionError(0, "offline", t("첨부 파일을 받지 못했어요: %s", "Could not download the attachment: %s") % _reason(e)[:200]) from None
 
 
 def _retry_after(value: Optional[str]) -> float:
@@ -261,10 +266,14 @@ def _reason(e: Exception) -> str:
 
 
 MESSAGES = {
-    401: "Notion 비밀 키가 맞지 않아요. 연결(integration)의 비밀 키를 다시 넣어 주세요",
-    403: "이 Notion 연결에 권한이 없어요. 페이지의 연결(Connections)에 추가했는지 확인하세요",
-    404: "Notion 페이지를 찾지 못했어요. 페이지에 연결(Connections)을 추가했는지 확인하세요",
-    429: "Notion 요청이 너무 많아요. 잠시 뒤 다시 시도합니다",
+    401: ("Notion 비밀 키가 맞지 않아요. 연결(integration)의 비밀 키를 다시 넣어 주세요",
+          "The Notion secret key is wrong. Enter the integration's secret key again"),
+    403: ("이 Notion 연결에 권한이 없어요. 페이지의 연결(Connections)에 추가했는지 확인하세요",
+          "This Notion integration has no access. Check that it is added under the page's Connections"),
+    404: ("Notion 페이지를 찾지 못했어요. 페이지에 연결(Connections)을 추가했는지 확인하세요",
+          "Notion page not found. Check that the integration is added under the page's Connections"),
+    429: ("Notion 요청이 너무 많아요. 잠시 뒤 다시 시도합니다",
+          "Too many Notion requests. Trying again shortly"),
 }
 
 
@@ -275,5 +284,5 @@ def _error(e: HTTPError) -> NotionError:
         payload = {}
     code = payload.get("code") or "http_%d" % e.code
     detail = payload.get("message") or ""
-    message = MESSAGES.get(e.code) or ("Notion 오류 %d: %s" % (e.code, detail or code))
+    message = t(*MESSAGES[e.code]) if e.code in MESSAGES else t("Notion 오류 %d: %s", "Notion error %d: %s") % (e.code, detail or code)
     return NotionError(e.code, code, message)

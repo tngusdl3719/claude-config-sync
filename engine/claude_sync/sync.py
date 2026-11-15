@@ -6,6 +6,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from .lang import t
 from . import approval, blocklist, transport
 from .claudemd import ensure_import
 from .gitio import EMPTY_TREE, GitError, commit_all, git, head, identity, is_cache, message, ref
@@ -289,7 +290,7 @@ def run_sync(p: Paths, *, auto: bool, now: Optional[float] = None) -> State:
     if not lock.acquire(wait=not auto):
         s = load_state(p)
         if not auto:
-            s.last_error = "다른 동기화가 진행 중입니다"
+            s.last_error = t("다른 동기화가 진행 중입니다", "Another sync is running")
         return s
     try:
         return sync_held(p, now)
@@ -314,7 +315,7 @@ def sync_held(p: Paths, now: Optional[float] = None) -> State:
 def _run(p: Paths, s: State, now: float) -> None:
     if not os.path.isdir(os.path.join(p.shared, ".git")):
         s.last_result = "error"
-        s.last_error = "공용 저장소가 없습니다. 설치를 먼저 하세요"
+        s.last_error = t("공용 저장소가 없습니다. 설치를 먼저 하세요", "No shared repository. Install first")
         return
     s.last_error = None
     ensure_gitignore(p)

@@ -22,6 +22,8 @@ struct WizardView: View {
     @State private var step: Step = .start
     @State private var kind: StorageKind = .gitlab
     private var backend: Backend { kind.backend }
+    /// The git host the repository help is for: the address typed, else the tab chosen.
+    private var gitKind: StorageKind { StorageKind.forAddress(repoText, chosen: kind) }
     @State private var repoText = ""
     @State private var repo = ""
     @State private var pageText = ""
@@ -76,20 +78,20 @@ struct WizardView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            if kind == .github {
-                Text(LocalizedStringKey(L10n.t("GitHub의 **비공개** 저장소 주소예요. 처음이라면 GitHub에서 비공개 저장소를 새로 만드세요. README는 넣어도 되지만 .gitignore·라이선스 템플릿은 고르지 마세요(일부 파일이 동기화에서 빠질 수 있어요).",
-                                                "The address of a **private** GitHub repository. For a first PC, make a new private repository. A README is fine, but do not pick a .gitignore or license template (some files could quietly stop syncing).")))
+            if backend == .git {
+                // The help and the link follow the address typed (else the tab); one field, so typing is never cut off.
+                Text(LocalizedStringKey(gitKind == .github
+                    ? L10n.t("GitHub의 **비공개** 저장소 주소예요. 처음이라면 GitHub에서 비공개 저장소를 새로 만드세요. README는 넣어도 되지만 .gitignore·라이선스 템플릿은 고르지 마세요(일부 파일이 동기화에서 빠질 수 있어요).",
+                             "The address of a **private** GitHub repository. For a first PC, make a new private repository. A README is fine, but do not pick a .gitignore or license template (some files could quietly stop syncing).")
+                    : L10n.t("GitLab 같은 git 호스팅의 **비공개** 프로젝트 주소예요. 처음이라면 GitLab에서 빈 비공개 프로젝트를 만들고(README 포함), Settings → Repository → Protected branches 에서 main 보호를 풀어 주세요.",
+                             "The address of a **private** project on a git host such as GitLab. For a first PC, make an empty private project (with a README) and unprotect main in Settings → Repository → Protected branches.")))
                     .font(.callout)
-                TextField(L10n.t("https://github.com/아이디/claude-config.git", "https://github.com/you/claude-config.git"), text: $repoText)
+                TextField(kind == .github ? L10n.t("https://github.com/아이디/claude-config.git", "https://github.com/you/claude-config.git")
+                          : L10n.t("https://gitlab.com/아이디/claude-config.git", "https://gitlab.com/you/claude-config.git"), text: $repoText)
                     .textFieldStyle(.roundedBorder)
-                Link(L10n.t("GitHub에서 새 저장소 만들기", "Make a new repository on GitHub"), destination: Wizard.newRepoPage(.github))
-            } else if backend == .git {
-                Text(LocalizedStringKey(L10n.t("GitLab 같은 git 호스팅의 **비공개** 프로젝트 주소예요. 처음이라면 GitLab에서 빈 비공개 프로젝트를 만들고(README 포함), Settings → Repository → Protected branches 에서 main 보호를 풀어 주세요.",
-                                                "The address of a **private** project on a git host such as GitLab. For a first PC, make an empty private project (with a README) and unprotect main in Settings → Repository → Protected branches.")))
-                    .font(.callout)
-                TextField(L10n.t("https://gitlab.com/아이디/claude-config.git", "https://gitlab.com/you/claude-config.git"), text: $repoText)
-                    .textFieldStyle(.roundedBorder)
-                Link(L10n.t("GitLab에서 새 프로젝트 만들기", "Make a new project on GitLab"), destination: Wizard.newRepoPage(.gitlab))
+                Link(gitKind == .github ? L10n.t("GitHub에서 새 저장소 만들기", "Make a new repository on GitHub")
+                                        : L10n.t("GitLab에서 새 프로젝트 만들기", "Make a new project on GitLab"),
+                     destination: Wizard.newRepoPage(gitKind))
             } else if signingIn {
                 notionSignIn
             } else {

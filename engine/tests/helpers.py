@@ -10,6 +10,8 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
+# The tests read the engine's and the installer's Korean messages; a test that wants English asks for it.
+os.environ["CLAUDE_SYNC_LANG"] = "ko"
 
 from claude_sync.paths import Paths  # noqa: E402
 

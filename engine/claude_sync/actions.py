@@ -10,6 +10,7 @@ import tempfile
 from contextlib import contextmanager
 from typing import Callable, Iterator, List, Optional
 
+from .lang import t
 from . import blocklist
 from .gitio import git, head, identity, message, ref
 from .links import KINDS, kind_dir
@@ -47,7 +48,7 @@ def holding(p: Paths) -> Iterator[None]:
     """Every change the person asks for runs whole under this PC's sync lock."""
     lock = Lock(p, wait_seconds=LOCK_WAIT_SECONDS)
     if not lock.acquire(wait=True):
-        raise ActionError("다른 동기화가 진행 중이에요. 잠시 뒤 다시 해 주세요")
+        raise ActionError(t("다른 동기화가 진행 중이에요. 잠시 뒤 다시 해 주세요", "Another sync is running. Try again in a moment"))
     try:
         yield
     finally:
@@ -56,13 +57,13 @@ def holding(p: Paths) -> Iterator[None]:
 
 def _kind(kind: str) -> str:
     if kind not in KINDS:
-        raise ActionError("종류는 skills 또는 mods 입니다: %s" % kind)
+        raise ActionError(t("종류는 skills 또는 mods 입니다: %s", "The kind is skills or mods: %s") % kind)
     return kind
 
 
 def _name(name: str) -> str:
     if not name or name.startswith(".") or "/" in name or name == "synced":
-        raise ActionError("이름이 올바르지 않습니다: %s" % name)
+        raise ActionError(t("이름이 올바르지 않습니다: %s", "Not a valid name: %s") % name)
     return name
 
 
@@ -95,7 +96,7 @@ def scan_tree(root: str, words: List[str], prefix: str) -> List[dict]:
 
 def _refuse_on_receive_only(p: Paths) -> None:
     if load_state(p).receive_only:
-        raise ActionError("받기 전용 PC에서는 공용 항목을 바꿀 수 없어요")
+        raise ActionError(t("받기 전용 PC에서는 공용 항목을 바꿀 수 없어요", "A receive-only PC cannot change shared items"))
 
 
 def _share(p: Paths, kind: str, name: str, force: bool = False) -> dict:
@@ -104,14 +105,14 @@ def _share(p: Paths, kind: str, name: str, force: bool = False) -> dict:
     src = os.path.join(kind_dir(p, kind), name)
     dst = os.path.join(p.shared, kind, name)
     if os.path.islink(src) or not os.path.isdir(src):
-        raise ActionError("이 PC 전용 %s 폴더가 아닙니다: %s" % (kind, name))
+        raise ActionError(t("이 PC 전용 %s 폴더가 아닙니다: %s", "Not a PC-only %s folder: %s") % (kind, name))
     if os.path.exists(dst):
-        raise ActionError("공용에 이미 같은 이름이 있습니다: %s" % name)
+        raise ActionError(t("공용에 이미 같은 이름이 있습니다: %s", "Shared already has that name: %s") % name)
     words = blocklist.load_words(p)
     if words and not force:
         hits = scan_tree(src, words, "%s/%s/" % (kind, name))
         if hits:
-            raise ActionError("금지어가 있어 공용으로 보내지 않았습니다", hits=hits)
+            raise ActionError(t("금지어가 있어 공용으로 보내지 않았습니다", "Not shared: it contains blocked words"), hits=hits)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.move(src, dst)
     os.symlink(dst, src)
@@ -124,11 +125,11 @@ def _unshare(p: Paths, kind: str, name: str) -> dict:
     link = os.path.join(kind_dir(p, kind), name)
     src = os.path.join(p.shared, kind, name)
     if not os.path.isdir(src):
-        raise ActionError("공용에 없는 이름입니다: %s" % name)
+        raise ActionError(t("공용에 없는 이름입니다: %s", "Not in shared: %s") % name)
     if os.path.islink(link):
         os.remove(link)
     elif os.path.lexists(link):
-        raise ActionError("이 PC에 같은 이름의 폴더가 있어 되돌릴 수 없습니다: %s" % name)
+        raise ActionError(t("이 PC에 같은 이름의 폴더가 있어 되돌릴 수 없습니다: %s", "Cannot bring it back: this PC has a folder with the same name: %s") % name)
     shutil.move(src, link)
     if kind == "skills":
         shared = read_settings(p.shared_settings())
@@ -146,12 +147,12 @@ def _find_conflict(s: State, conflict_id: str) -> dict:
     for c in s.conflicts:
         if c["id"] == conflict_id:
             return c
-    raise ActionError("그런 충돌이 없습니다: %s" % conflict_id)
+    raise ActionError(t("그런 충돌이 없습니다: %s", "No such conflict: %s") % conflict_id)
 
 
 def _resolve(p: Paths, conflict_id: str, choice: str) -> State:
     if choice not in ("keep", "take"):
-        raise ActionError("keep 또는 take 를 고르세요")
+        raise ActionError(t("keep 또는 take 를 고르세요", "Choose keep or take"))
     s = load_state(p)
     c = _find_conflict(s, conflict_id)
     if c["kind"] == "file":
@@ -195,7 +196,7 @@ def _resolve(p: Paths, conflict_id: str, choice: str) -> State:
 def _approve(p: Paths) -> State:
     s = load_state(p)
     if not s.pending_approval:
-        raise ActionError("확인할 변경이 없습니다")
+        raise ActionError(t("확인할 변경이 없습니다", "Nothing to review"))
     s.approved_remote = s.pending_approval[0]["remote"]
     save_state(p, s)
     return sync_held(p)
@@ -207,10 +208,10 @@ def build_rejection(p: Paths, info: dict) -> str:
     s = load_state(p)
     current = head(p)
     if current is None:
-        raise ActionError("받은 기록이 없어 거절할 수 없습니다")
+        raise ActionError(t("받은 기록이 없어 거절할 수 없습니다", "Nothing received to reject"))
     r = git(p, "merge-tree", "--write-tree", current, info["remote"], check=False)
     if r.returncode != 0:
-        raise ActionError("다른 변경과 충돌해서 거절할 수 없습니다. 승인한 뒤 되돌리기를 쓰세요")
+        raise ActionError(t("다른 변경과 충돌해서 거절할 수 없습니다. 승인한 뒤 되돌리기를 쓰세요", "Cannot reject: it conflicts with other changes. Approve it, then revert"))
     merged_tree = r.stdout.split()[0]
     fd, index = tempfile.mkstemp(prefix="claude-sync-index-")
     os.close(fd)
@@ -247,7 +248,7 @@ def build_rejection(p: Paths, info: dict) -> str:
 def _reject(p: Paths) -> State:
     s = load_state(p)
     if not s.pending_approval:
-        raise ActionError("확인할 변경이 없습니다")
+        raise ActionError(t("확인할 변경이 없습니다", "Nothing to review"))
     info = s.pending_approval[0]
     sha = build_rejection(p, info)
     git(p, "merge", "-q", "--ff-only", sha)
@@ -269,11 +270,11 @@ def _discard_blocked(p: Paths) -> State:
     remote = ref(p, REMOTE)
     current = head(p)
     if remote is None or current is None:
-        raise ActionError("서버에 받은 기록이 없어 되돌릴 수 없습니다")
+        raise ActionError(t("서버에 받은 기록이 없어 되돌릴 수 없습니다", "Cannot revert: nothing was received from the server"))
     # Back to the last state this PC accepted, never straight to an unreviewed remote.
     base = git(p, "merge-base", current, remote, check=False).stdout.strip()
     if not base:
-        raise ActionError("서버 기록과 이어지지 않아 되돌릴 수 없습니다")
+        raise ActionError(t("서버 기록과 이어지지 않아 되돌릴 수 없습니다", "Cannot revert: it does not follow the server's history"))
     git(p, "reset", "-q", "--hard", base)
     git(p, "clean", "-q", "-fd")
     s = load_state(p)
@@ -285,12 +286,12 @@ def _discard_blocked(p: Paths) -> State:
 
 def _revert(p: Paths, sha: str) -> State:
     if not re.match(r"^[0-9a-f]{7,40}$", sha):
-        raise ActionError("커밋 이름이 올바르지 않습니다")
+        raise ActionError(t("커밋 이름이 올바르지 않습니다", "Not a valid commit name"))
     s = load_state(p)
     r = git(p, *identity(s.pc_name), "revert", "--no-edit", "--no-commit", sha, check=False)
     if r.returncode != 0:
         git(p, "revert", "--abort", check=False)
-        raise ActionError("되돌리기가 다른 변경과 충돌합니다")
+        raise ActionError(t("되돌리기가 다른 변경과 충돌합니다", "The revert conflicts with other changes"))
     subject = git(p, "log", "-1", "--format=%s", sha).stdout.strip()
     git(p, *identity(s.pc_name), "commit", "-q", "-m", message(s.pc_name, "되돌림: %s" % subject))
     return sync_held(p)
@@ -310,7 +311,7 @@ def block(p: Paths, op: str, word: Optional[str]) -> List[str]:
     elif op == "remove" and word:
         words = [w for w in words if w != word]
     elif op != "list":
-        raise ActionError("block list|add|remove <단어>")
+        raise ActionError(t("block list|add|remove <단어>", "block list|add|remove <word>"))
     if op != "list":
         blocklist.save_words(p, words)
     return blocklist.load_words(p)
@@ -319,11 +320,11 @@ def block(p: Paths, op: str, word: Optional[str]) -> List[str]:
 def register_pc(line: str, admin_host: str = "split", runner: Callable = subprocess.run) -> dict:
     line = (line or "").strip()
     if "\n" in line or not KEY_LINE.match(line):
-        raise ActionError("공개키 한 줄(ssh-ed25519 ...)을 그대로 붙여 넣으세요")
+        raise ActionError(t("공개키 한 줄(ssh-ed25519 ...)을 그대로 붙여 넣으세요", "Paste the public key line (ssh-ed25519 ...) as it is"))
     argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", admin_host, "sudo", ADD_KEY_HELPER]
     r = runner(argv, input=line + "\n", capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
-        raise ActionError("서버 등록에 실패했습니다: %s" % (r.stderr or r.stdout).strip()[:300])
+        raise ActionError(t("서버 등록에 실패했습니다: %s", "Could not register with the server: %s") % (r.stderr or r.stdout).strip()[:300])
     return {"registered": line.split()[-1] if len(line.split()) > 2 else "key", "result": r.stdout.strip()}
 
 
@@ -374,7 +375,7 @@ def set_auto(p: Paths, enabled: bool) -> State:
 
 def set_sync_mode(p: Paths, mode: str) -> State:
     if mode not in ("receive-only", "normal"):
-        raise ActionError("mode 는 receive-only 또는 normal 이에요")
+        raise ActionError(t("mode 는 receive-only 또는 normal 이에요", "mode is receive-only or normal"))
     with holding(p):
         s = load_state(p)
         s.receive_only = mode == "receive-only"

@@ -47,6 +47,16 @@ private func leftovers(_ marker: String) -> String {
         #expect(status.receiveOnly)
     }
 
+    @Test func theEngineSpeaksTheAppsLanguage() async throws {
+        let f = try FakeEngines()
+        let engine = try f.script("lang", #"printf '%s' "${CLAUDE_SYNC_LANG-unset}" > "$(dirname "$0")/lang.out"; echo '{}'"#)
+        let runner = EngineRunner(executable: engine)
+        for language in AppLanguage.allCases {
+            _ = await L10n.$override.withValue(language) { await runner.run(["status"], timeout: 10) }
+            #expect(f.read("lang.out") == language.rawValue)
+        }
+    }
+
     @Test func errorReplyCarriesMessageAndHits() async throws {
         let f = try FakeEngines()
         let engine = try f.script("err", #"echo '{"error": "금지어가 있어요", "hits": [{"file": "a", "line": 1, "text": "x", "word": "corp"}]}'; exit 1"#)

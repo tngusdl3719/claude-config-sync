@@ -9,6 +9,7 @@ import sys
 import time
 from typing import List, Optional
 
+from .lang import t
 from . import actions, notion_store, remote as remote_mod
 from .blocklist import save_words
 from .claudemd import IMPORT_LINE
@@ -70,7 +71,8 @@ class SetupError(RuntimeError):
 
 
 OWN_MOD = "config-sync"
-OTHER_REPO = "이 PC는 다른 저장소에 연결돼 있어요. 같은 저장소 정보로 다시 하거나, 저장소를 바꾸려면 set-remote 를 쓰세요"
+OTHER_REPO = ("이 PC는 다른 저장소에 연결돼 있어요. 같은 저장소 정보로 다시 하거나, 저장소를 바꾸려면 set-remote 를 쓰세요",
+              "This PC is connected to another repository. Run it again with the same repository, or use set-remote to change it")
 
 
 def _packed_mod() -> Optional[str]:
@@ -106,7 +108,7 @@ def stdin_secret() -> str:
     """A secret (Notion key or access token) arrives as one stdin line: never argv, env or files."""
     secret = sys.stdin.readline().strip()
     if not secret:
-        raise actions.ActionError("비밀 키(토큰)를 표준 입력으로 넘겨 주세요")
+        raise actions.ActionError(t("비밀 키(토큰)를 표준 입력으로 넘겨 주세요", "Pass the secret key (token) on standard input"))
     return secret
 
 
@@ -117,7 +119,7 @@ def _receive_git(p: Paths, url: str, username: str, token: str) -> Optional[str]
     remote_mod.store_token(p, target, token, username=username)
     r = git(p, "fetch", "-q", "origin", check=False, timeout=remote_mod.NETWORK_SECONDS * 6)
     if r.returncode != 0:
-        return ((r.stderr or "").strip().splitlines() or ["저장소에서 받지 못했어요"])[-1][:300]
+        return ((r.stderr or "").strip().splitlines() or [t("저장소에서 받지 못했어요", "Could not fetch from the repository")])[-1][:300]
     return None
 
 
@@ -128,7 +130,7 @@ def init(p: Paths, *, pc: str, skills: List[str], mods: List[str], keys: List[st
          oauth: bool = False) -> dict:
     now = time.time() if now is None else now
     if os.path.exists(p.shared):
-        raise RuntimeError("이미 %s 가 있습니다" % p.shared)
+        raise RuntimeError(t("이미 %s 가 있습니다", "%s already exists") % p.shared)
     where = State()
     if backend == "notion":
         try:
@@ -245,7 +247,7 @@ def _receive_first(p: Paths, backend: str, page: Optional[str], secret: Optional
         if error is not None:
             raise SetupError(error)
         if ref(p, REMOTE) is None:
-            raise SetupError("아직 첫 PC 설정이 없어요. 첫 PC에서 먼저 설정하세요")
+            raise SetupError(t("아직 첫 PC 설정이 없어요. 첫 PC에서 먼저 설정하세요", "No first PC yet. Set up the first PC first"))
         git(p, "checkout", "-q", "-B", "main", REMOTE)
         save_state(p, s)
     except (NotionError, remote_mod.RemoteError) as e:
@@ -259,20 +261,20 @@ def _receive_first(p: Paths, backend: str, page: Optional[str], secret: Optional
 def _join_again(p: Paths, backend: str, page: Optional[str], secret: Optional[str], remote: Optional[str],
                 username: Optional[str], token: Optional[str], setup_args: dict, auth: str = "secret") -> dict:
     if not os.path.isdir(os.path.join(p.shared, ".git")):
-        raise SetupError("이미 %s 가 있어요" % p.shared)
+        raise SetupError(t("이미 %s 가 있어요", "%s already exists") % p.shared)
     try:
         # Under the sync lock: the credentials a running sync (or its token refresh) uses change here.
         with actions.holding(p):
             s = load_state(p)
             if backend == "notion":
                 if s.backend != "notion" or s.notion_page_id != page_id(page or ""):
-                    raise SetupError(OTHER_REPO)
+                    raise SetupError(t(*OTHER_REPO))
                 notion_store.connect(p, s, page or "", secret or "", create=False, auth=auth)
             else:
                 target = remote_mod.normalized(remote or "", username or "")
                 current = git(p, "config", "--get", "remote.origin.url", check=False).stdout.strip()
                 if s.backend != "git" or current != target:
-                    raise SetupError(OTHER_REPO)
+                    raise SetupError(t(*OTHER_REPO))
                 remote_mod.store_token(p, target, token or "", username=username)
             save_state(p, s)
     except (NotionError, remote_mod.RemoteError, actions.ActionError) as e:
@@ -284,7 +286,7 @@ def setup(p: Paths, *, pc: str, words: List[str], require_approval: bool = False
           managed_settings: str = MANAGED_SETTINGS, receive_only: bool = False) -> dict:
     now = time.time() if now is None else now
     if not os.path.isdir(os.path.join(p.shared, ".git")):
-        raise RuntimeError("먼저 공용 저장소를 %s 에 받아야 합니다" % p.shared)
+        raise RuntimeError(t("먼저 공용 저장소를 %s 에 받아야 합니다", "Fetch the shared repository into %s first") % p.shared)
     dest = backup(p, now)
     s = load_state(p)
     s.pc_name = pc
@@ -327,7 +329,8 @@ def use_notion(p: Paths, page: str, secret: Optional[str], *, oauth: bool = Fals
     return {"backend": "notion", "page": s.notion_page_id, "ok": True}
 
 
-OTHER_HISTORY_GIT = "이 저장소에는 이 PC와 이어지지 않는 다른 공용 설정이 있어요. 빈 프로젝트나 이 PC들이 쓰는 저장소를 고르세요"
+OTHER_HISTORY_GIT = ("이 저장소에는 이 PC와 이어지지 않는 다른 공용 설정이 있어요. 빈 프로젝트나 이 PC들이 쓰는 저장소를 고르세요",
+                     "This repository holds other shared settings that do not continue this PC's. Choose an empty project or the one these PCs use")
 PROBE_REF = "refs/claude-sync/probe"
 
 
@@ -343,24 +346,24 @@ def _continue_remote_history(p: Paths) -> None:
     """The remote's main must continue this PC's history; a hosting README is joined in."""
     listed = git(p, "ls-remote", "origin", "refs/heads/main", check=False, timeout=remote_mod.NETWORK_SECONDS)
     if listed.returncode != 0:
-        raise actions.ActionError("저장소에 연결하지 못했어요")
+        raise actions.ActionError(t("저장소에 연결하지 못했어요", "Could not reach the repository"))
     if not listed.stdout.strip():
         return  # an empty project: the next sync sends this PC's history
     try:
         if git(p, "fetch", "-q", "origin", "+refs/heads/main:%s" % PROBE_REF, check=False,
                timeout=remote_mod.NETWORK_SECONDS).returncode != 0:
-            raise actions.ActionError("저장소의 공용 설정을 받지 못했어요")
+            raise actions.ActionError(t("저장소의 공용 설정을 받지 못했어요", "Could not fetch the shared settings from the repository"))
         theirs, current = ref(p, PROBE_REF), head(p)
         if not current or git(p, "merge-base", theirs, current, check=False).stdout.strip():
             return
         if not _hosting_readme(p, theirs):
-            raise actions.ActionError(OTHER_HISTORY_GIT)
+            raise actions.ActionError(t(*OTHER_HISTORY_GIT))
         name = load_state(p).pc_name
         r = git(p, *identity(name), "merge", "-q", "--allow-unrelated-histories", "--no-edit",
                 "-m", message(name, "저장소 README 합치기"), theirs, check=False)
         if r.returncode != 0:
             git(p, "merge", "--abort", check=False)
-            raise actions.ActionError(OTHER_HISTORY_GIT)
+            raise actions.ActionError(t(*OTHER_HISTORY_GIT))
     finally:
         git(p, "update-ref", "-d", PROBE_REF, check=False)
 
@@ -393,7 +396,7 @@ def use_git(p: Paths, url: str, username: str, token: str) -> dict:
         try:
             out = remote_mod.set_remote(p, url, username, token)
             if not out.get("ok"):
-                raise actions.ActionError(out.get("error") or "저장소에 연결하지 못했어요")
+                raise actions.ActionError(out.get("error") or t("저장소에 연결하지 못했어요", "Could not reach the repository"))
             _continue_remote_history(p)
         except (actions.ActionError, remote_mod.RemoteError) as e:
             _put_back(p, old_url, old_tip, target, username, old_token)
@@ -484,7 +487,7 @@ def run(p: Paths, args) -> dict:
     if args.cmd == "init":
         notion = args.backend == "notion"
         if not notion and not args.remote:
-            raise actions.ActionError("--remote 가 필요해요")
+            raise actions.ActionError(t("--remote 가 필요해요", "--remote is needed"))
         secret = stdin_secret() if (notion and not args.oauth) or args.token_stdin else None
         return init(p, remote=args.remote, pc=args.pc, skills=_split(args.skills), mods=_split(args.mods),
                     keys=_split(args.keys), claude_md=args.claude_md, require_approval=args.require_approval,
@@ -494,7 +497,7 @@ def run(p: Paths, args) -> dict:
     if args.cmd == "join":
         notion = args.backend == "notion"
         if not notion and (not args.remote or not args.username):
-            raise actions.ActionError("--remote 와 --username 이 필요해요")
+            raise actions.ActionError(t("--remote 와 --username 이 필요해요", "--remote and --username are needed"))
         secret = None if notion and args.oauth else stdin_secret()
         return join(p, pc=args.pc, words=_split(args.words), receive_only=args.receive_only,
                     require_approval=args.require_approval, backend=args.backend, page=args.page,
@@ -511,7 +514,7 @@ def run(p: Paths, args) -> dict:
         except ValueError:
             client = {}
         if not isinstance(client, dict) or not client.get("client_id") or not client.get("client_secret"):
-            raise actions.ActionError("Notion 공개 연결 정보를 표준 입력으로 넘겨 주세요")
+            raise actions.ActionError(t("Notion 공개 연결 정보를 표준 입력으로 넘겨 주세요", "Pass the Notion public connection details on standard input"))
         try:
             return notion_store.login(p, str(client["client_id"]), str(client["client_secret"]),
                                       port=args.port, timeout=args.timeout)
@@ -521,4 +524,4 @@ def run(p: Paths, args) -> dict:
         return setup(p, pc=args.pc, words=_split(args.words), require_approval=args.require_approval,
                      managed_settings=os.environ.get("CLAUDE_SYNC_MANAGED_SETTINGS", MANAGED_SETTINGS),
                      receive_only=args.receive_only)
-    raise actions.ActionError("알 수 없는 명령: %s" % args.cmd)
+    raise actions.ActionError(t("알 수 없는 명령: %s", "Unknown command: %s") % args.cmd)
