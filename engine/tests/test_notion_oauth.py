@@ -27,6 +27,19 @@ from claude_sync.state import load_state
 from claude_sync.sync import run_sync
 
 NOW = 1_800_000_000.0
+OLD_KEYCHAIN = """import json, os, sys
+db, action = sys.argv[1], sys.argv[2]
+items = json.load(open(db)) if os.path.exists(db) else {}
+fields = dict(line.split("=", 1) for line in sys.stdin.read().splitlines() if "=" in line)
+key = "|".join(fields.get(k, "") for k in ("protocol", "host", "path", "username"))
+if action == "get" and key in items:
+    print("password=" + items[key])
+elif action == "store":
+    items.setdefault(key, fields.get("password", ""))
+elif action == "erase":
+    items.pop(key, None)
+json.dump(items, open(db, "w"))
+"""
 
 
 def browser(fake, pages, *, deny=False, wrong_state=False, seen=None):
@@ -116,6 +129,32 @@ class OAuthTest(TempCase):
                 self.login(a)
         self.assertIn("키체인", str(cm.exception))
         self.assertNotIn("ntn_oauth_", str(cm.exception))
+
+    def old_keychain(self):
+        """git's keychain helper before 2.45 (Apple's git up to Xcode 16): 'store' adds an item and leaves
+        one already there as it was."""
+        script = os.path.join(self.root, "old-keychain.py")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(OLD_KEYCHAIN)
+        return "!%s %s %s" % (sys.executable, script, os.path.join(self.root, "old-keychain.json"))
+
+    def test_signing_in_again_replaces_what_an_old_keychain_helper_keeps(self):
+        a = Paths(make_home(self.root, "a"))
+        with mock.patch.dict(os.environ, {"CLAUDE_SYNC_CREDENTIAL_HELPER": self.old_keychain()}):
+            self.login(a)
+            first = notion_store.load_secret(a, notion_store.PENDING_REFRESH)
+            self.login(a)  # every item of the first sign-in is still there
+            self.assertNotEqual(notion_store.load_secret(a, notion_store.PENDING_REFRESH), first)
+
+    def test_a_refresh_is_kept_by_an_old_keychain_helper(self):
+        with mock.patch.dict(os.environ, {"CLAUDE_SYNC_CREDENTIAL_HELPER": self.old_keychain()}):
+            a = self.first_pc()
+            before = notion_store.load_secret(a, self.page)
+            self.fake.expire(before)
+            s = run_sync(a, auto=False, now=NOW + 1)
+            self.assertEqual(s.last_result, "ok", s.last_error)
+            self.assertNotEqual(notion_store.load_secret(a, self.page), before)
+            self.assertEqual(run_sync(a, auto=False, now=NOW + 2).last_result, "ok")
 
     def test_page_list_leaves_out_the_sync_rows(self):
         self.first_pc()

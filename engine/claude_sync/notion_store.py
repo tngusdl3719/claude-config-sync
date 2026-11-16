@@ -75,9 +75,19 @@ def _credential(p: Paths, action: str, page: str, secret: Optional[str] = None) 
 def save_secret(p: Paths, page: str, secret: str) -> None:
     if not secret or "\n" in secret:
         raise NotionError(0, "bad_secret", t("Notion 비밀 키가 비어 있거나 올바르지 않아요", "The Notion secret key is empty or not valid"))
+    failed = NotionError(0, "keychain", t("Notion 비밀 키를 키체인에 저장하지 못했어요", "Could not save the Notion secret key in the keychain"))
     # 'approve' succeeds even when the helper kept nothing (e.g. the keychain was out of reach): read it back.
-    if _credential(p, "approve", page, secret).returncode != 0 or _stored(p, page) != secret:
-        raise NotionError(0, "keychain", t("Notion 비밀 키를 키체인에 저장하지 못했어요", "Could not save the Notion secret key in the keychain"))
+    if _credential(p, "approve", page, secret).returncode != 0:
+        raise failed
+    kept = _stored(p, page)
+    if kept is not None and kept != secret:
+        # git's keychain helper before 2.45 (Apple's git up to Xcode 16) leaves an item already there as it was.
+        forget_secret(p, page)
+        if _credential(p, "approve", page, secret).returncode != 0:
+            raise failed
+        kept = _stored(p, page)
+    if kept != secret:
+        raise failed
 
 
 def _stored(p: Paths, page: str) -> Optional[str]:
