@@ -31,6 +31,8 @@ def _storage(p: Paths, s) -> dict:
         page = s.notion_page_id or ""
         return {"backend": "notion", "page": page, "auth": s.notion_auth or "secret",
                 "url": "https://www.notion.so/%s" % page if page else ""}
+    if s.backend == "folder":
+        return {"backend": "folder", "folder": s.folder_path or ""}
     url = git(p, "config", "--get", "remote.origin.url", check=False).stdout.strip()
     m = re.match(r"^(https?://)([^@/]+)@(.+)$", url)
     if not m:

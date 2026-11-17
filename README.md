@@ -1,6 +1,6 @@
 # Claude Code config sync (config-sync)
 
-Keeps the Claude Code setup of several Macs in step, but **only the parts you mark as shared**: the `CLAUDE.md` instructions, chosen settings, skills and mods. They travel through private storage of your choice: a **GitLab or GitHub repository** (private) or a **Notion page**. PC-only items (company skills, MCP servers, memory, hooks and so on) never leave the Mac, and on a work PC a blocklist stops company words from being uploaded.
+Keeps the Claude Code setup of several Macs in step, but **only the parts you mark as shared**: the `CLAUDE.md` instructions, chosen settings, skills and mods. They travel through private storage of your choice: a **GitLab or GitHub repository** (private), a **Notion page**, or a **sync folder** (iCloud Drive, Dropbox, Google Drive, OneDrive, a NAS). PC-only items (company skills, MCP servers, memory, hooks and so on) never leave the Mac, and on a work PC a blocklist stops company words from being uploaded.
 
 ## What's inside
 
@@ -45,9 +45,11 @@ An update also carries the sync engine. When the app's engine is newer than the 
 | **GitLab** | A private project, and a token for each PC from Settings → Access tokens (role **Developer**, scopes `read_repository` and `write_repository`). For a new project, unprotect `main` under Settings → Repository → Protected branches. |
 | **GitHub** | A private repository. A README is fine, but do not pick a `.gitignore` or license template. For each PC, a **fine-grained token** (Settings → Developer settings) limited to that repository (*Only select repositories*) with **Contents: Read and write**. |
 | **Notion** | One page to sync with. **Connect with Notion**: sign in, allow the page, pick it from the list. (Or, under *Use a secret key instead*, an internal integration's secret key `ntn_…` and the page's link.) |
+| **Sync folder** | A folder a sync app carries between your Macs: iCloud Drive, Dropbox, Google Drive, OneDrive, or a NAS. The app lists the ones it finds (it uses a `Claude Sync` folder inside), or choose any folder. No token or sign-in; every PC picks the same folder of the same account, and its sync app has to be running. |
 
 - Tokens and secret keys are typed into hidden fields and kept **only in this Mac's keychain**. They never go into files, logs or command arguments.
-- Every PC has to use the same storage to sync with the others. You can switch between GitLab, GitHub and Notion, or connect again, later under **Storage** in the app. If the new storage holds other history that does not continue this PC's, the move is refused and nothing changes.
+- Every PC has to use the same storage to sync with the others. Later, **Storage** in the app lists them with a switch each: one is on, switching another on moves this PC there, and the one in use can be connected again. If the new storage holds other history that does not continue this PC's, the move is refused and nothing changes.
+- A sync folder gets one new file per upload (a git bundle) and none is ever changed, so a sync app that is slow, or two Macs writing at once, cannot damage it. A file still arriving is read on a later sync.
 - **Connect with Notion** works on every Mac. Notion's sign-in ends with a request that needs the connection's secret, which an app anyone can download cannot keep, so that one step goes through a small broker (`server/notion-broker`, a Cloudflare Worker) that holds the secret, passes the request to Notion and keeps nothing. Your Notion tokens stay in your Mac's keychain.
 
 ### Everyday use
@@ -66,7 +68,7 @@ To set up without the app, run `dist/claude-sync-install.command` (made by `scri
 bash ~/Downloads/claude-sync-install.command
 ```
 
-An `https://` repository address connects with an access token; choosing Notion connects with a secret key. For a self-hosted SSH server (`claude-sync-server:…` addresses) it asks for the server's address, which you can also give as `CLAUDE_SYNC_SSH_HOST`.
+An `https://` repository address connects with an access token; choosing Notion connects with a secret key. (A sync folder is set up in the app.) For a self-hosted SSH server (`claude-sync-server:…` addresses) it asks for the server's address, which you can also give as `CLAUDE_SYNC_SSH_HOST`.
 
 The installer speaks the language chosen in the Claude Sync app, or the Mac's language when the app has no choice yet (Korean for Korean, English otherwise). To pick one, run it as `CLAUDE_SYNC_LANG=en bash …` or `CLAUDE_SYNC_LANG=ko bash …`.
 

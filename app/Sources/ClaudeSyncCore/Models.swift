@@ -198,17 +198,20 @@ public struct Storage: Decodable, Equatable, Sendable {
     public var page: String
     public var auth: String
     public var url: String
+    /// A synced folder: where it is.
+    public var folder: String
 
-    enum CodingKeys: String, CodingKey { case backend, remote, username, page, auth, url }
+    enum CodingKeys: String, CodingKey { case backend, remote, username, page, auth, url, folder }
 
     public init(backend: Backend, remote: String = "", username: String = "", page: String = "", auth: String = "",
-                url: String = "") {
+                url: String = "", folder: String = "") {
         self.backend = backend
         self.remote = remote
         self.username = username
         self.page = page
         self.auth = auth
         self.url = url
+        self.folder = folder
     }
 
     public init(from decoder: Decoder) throws {
@@ -220,6 +223,7 @@ public struct Storage: Decodable, Equatable, Sendable {
         page = c.lenient(.page, "")
         auth = c.lenient(.auth, "")
         url = c.lenient(.url, "")
+        folder = c.lenient(.folder, "")
     }
 }
 

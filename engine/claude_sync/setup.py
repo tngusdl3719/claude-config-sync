@@ -10,10 +10,11 @@ import time
 from typing import List, Optional
 
 from .lang import t
-from . import actions, notion_store, remote as remote_mod
+from . import actions, folder_store, notion_store, remote as remote_mod
 from .blocklist import save_words
 from .claudemd import IMPORT_LINE
 from .gitio import git, head, identity, message, ref
+from .folder_store import FolderError
 from .notion import NotionError, page_id
 from .links import KINDS, kind_dir
 from .paths import Paths
@@ -127,7 +128,7 @@ def init(p: Paths, *, pc: str, skills: List[str], mods: List[str], keys: List[st
          claude_md: str = "move", require_approval: bool = False, now: Optional[float] = None,
          backend: str = "git", page: Optional[str] = None, secret: Optional[str] = None,
          username: Optional[str] = None, token: Optional[str] = None, words: List[str] = (),
-         oauth: bool = False) -> dict:
+         oauth: bool = False, folder: Optional[str] = None) -> dict:
     now = time.time() if now is None else now
     if os.path.exists(p.shared):
         raise RuntimeError(t("이미 %s 가 있습니다", "%s already exists") % p.shared)
@@ -139,8 +140,13 @@ def init(p: Paths, *, pc: str, skills: List[str], mods: List[str], keys: List[st
                                  auth="oauth" if oauth else "secret")
         except NotionError as e:
             raise SetupError(str(e)) from None
+    if backend == "folder":
+        try:
+            folder_store.connect(p, where, folder or "", create=True, require_empty=True)
+        except FolderError as e:
+            raise SetupError(str(e)) from None
     dest = backup(p, now)
-    if backend == "notion":
+    if backend in ("notion", "folder"):
         _git_init(p)
     elif token:
         error = _receive_git(p, remote or "", username or "", token)
@@ -178,7 +184,7 @@ def init(p: Paths, *, pc: str, skills: List[str], mods: List[str], keys: List[st
     s.require_approval = require_approval
     s.baseline = encode_base(flatten(shared))
     s.backend, s.notion_page_id, s.notion_data_source_id = where.backend, where.notion_page_id, where.notion_data_source_id
-    s.notion_auth = where.notion_auth
+    s.notion_auth, s.folder_path = where.notion_auth, where.folder_path
     save_state(p, s)
     if words:  # in place before the first upload, which they check
         save_words(p, list(words))
@@ -209,8 +215,9 @@ def _managed_keys(path: str) -> List[str]:
 def join(p: Paths, *, pc: str, words: List[str] = (), receive_only: bool = False, require_approval: bool = False,
          backend: str = "git", page: Optional[str] = None, secret: Optional[str] = None,
          remote: Optional[str] = None, username: Optional[str] = None, token: Optional[str] = None,
-         now: Optional[float] = None, managed_settings: str = MANAGED_SETTINGS, oauth: bool = False) -> dict:
-    """A new PC: receive the shared repo (git remote or Notion), then set up as `setup` does.
+         now: Optional[float] = None, managed_settings: str = MANAGED_SETTINGS, oauth: bool = False,
+         folder: Optional[str] = None) -> dict:
+    """A new PC: receive the shared repo (git remote, Notion or a folder), then set up as `setup` does.
     Again on the same repo: store the secret anew and set up again (finishing a half-done setup).
     `oauth`: the Notion key is the token the last 'Notion으로 연결' brought."""
     setup_args = dict(pc=pc, words=list(words), require_approval=require_approval, now=now,
@@ -224,24 +231,28 @@ def join(p: Paths, *, pc: str, words: List[str] = (), receive_only: bool = False
     if os.path.isdir(os.path.join(p.shared, ".git")) and head(p) is None:
         shutil.rmtree(p.shared)  # stopped before anything arrived: start over
     if os.path.exists(p.shared):
-        return _join_again(p, backend, page, secret, remote, username, token, setup_args, auth)
+        return _join_again(p, backend, page, secret, remote, username, token, setup_args, auth, folder)
     try:
         # Under the sync lock, like every sync: a token refresh during the first download is one too.
         with actions.holding(p):
-            _receive_first(p, backend, page, secret, remote, username, token, auth)
+            _receive_first(p, backend, page, secret, remote, username, token, auth, folder)
     except actions.ActionError as e:
         raise SetupError(str(e)) from None
     return setup(p, **setup_args)
 
 
 def _receive_first(p: Paths, backend: str, page: Optional[str], secret: Optional[str], remote: Optional[str],
-                   username: Optional[str], token: Optional[str], auth: str) -> None:
+                   username: Optional[str], token: Optional[str], auth: str, folder: Optional[str] = None) -> None:
     s = load_state(p)
     try:
         if backend == "notion":
             notion_store.connect(p, s, page or "", secret or "", create=False, auth=auth)
             _git_init(p)
             error = notion_store.fetch(p, s)
+        elif backend == "folder":
+            folder_store.connect(p, s, folder or "", create=False)
+            _git_init(p)
+            error = folder_store.fetch(p, s)
         else:
             error = _receive_git(p, remote or "", username or "", token or "")
         if error is not None:
@@ -250,7 +261,7 @@ def _receive_first(p: Paths, backend: str, page: Optional[str], secret: Optional
             raise SetupError(t("아직 첫 PC 설정이 없어요. 첫 PC에서 먼저 설정하세요", "No first PC yet. Set up the first PC first"))
         git(p, "checkout", "-q", "-B", "main", REMOTE)
         save_state(p, s)
-    except (NotionError, remote_mod.RemoteError) as e:
+    except (NotionError, FolderError, remote_mod.RemoteError) as e:
         shutil.rmtree(p.shared, ignore_errors=True)
         raise SetupError(str(e)) from None
     except BaseException:
@@ -259,7 +270,8 @@ def _receive_first(p: Paths, backend: str, page: Optional[str], secret: Optional
 
 
 def _join_again(p: Paths, backend: str, page: Optional[str], secret: Optional[str], remote: Optional[str],
-                username: Optional[str], token: Optional[str], setup_args: dict, auth: str = "secret") -> dict:
+                username: Optional[str], token: Optional[str], setup_args: dict, auth: str = "secret",
+                folder: Optional[str] = None) -> dict:
     if not os.path.isdir(os.path.join(p.shared, ".git")):
         raise SetupError(t("이미 %s 가 있어요", "%s already exists") % p.shared)
     try:
@@ -270,6 +282,9 @@ def _join_again(p: Paths, backend: str, page: Optional[str], secret: Optional[st
                 if s.backend != "notion" or s.notion_page_id != page_id(page or ""):
                     raise SetupError(t(*OTHER_REPO))
                 notion_store.connect(p, s, page or "", secret or "", create=False, auth=auth)
+            elif backend == "folder":
+                if s.backend != "folder" or s.folder_path != folder_store.folder_path(folder or ""):
+                    raise SetupError(t(*OTHER_REPO))
             else:
                 target = remote_mod.normalized(remote or "", username or "")
                 current = git(p, "config", "--get", "remote.origin.url", check=False).stdout.strip()
@@ -327,6 +342,23 @@ def use_notion(p: Paths, page: str, secret: Optional[str], *, oauth: bool = Fals
             git(p, "update-ref", "-d", name, check=False)
         save_state(p, s)
     return {"backend": "notion", "page": s.notion_page_id, "ok": True}
+
+
+def use_folder(p: Paths, folder: str) -> dict:
+    """Move this PC to a synced folder (made if missing, never by a receive-only PC). Refused, leaving the
+    PC as it was, when the folder holds shared settings this PC's history does not continue."""
+    with actions.holding(p):
+        s = load_state(p)
+        try:
+            folder_store.check_move(p, folder, receive_only=s.receive_only)
+            folder_store.connect(p, s, folder, create=not s.receive_only)
+        except FolderError as e:
+            raise actions.ActionError(str(e)) from None
+        git(p, "update-ref", "-d", REMOTE_REF, check=False)
+        for name in git(p, "for-each-ref", "--format=%(refname)", notion_store.ROW_REFS).stdout.split():
+            git(p, "update-ref", "-d", name, check=False)
+        save_state(p, s)
+    return {"backend": "folder", "folder": s.folder_path, "ok": True}
 
 
 OTHER_HISTORY_GIT = ("이 저장소에는 이 PC와 이어지지 않는 다른 공용 설정이 있어요. 빈 프로젝트나 이 PC들이 쓰는 저장소를 고르세요",
@@ -448,8 +480,9 @@ def add_commands(sub) -> None:
     ini.add_argument("--remote")
     ini.add_argument("--username")
     ini.add_argument("--token-stdin", action="store_true")
-    ini.add_argument("--backend", choices=["git", "notion"], default="git")
+    ini.add_argument("--backend", choices=["git", "notion", "folder"], default="git")
     ini.add_argument("--page")
+    ini.add_argument("--folder")
     ini.add_argument("--pc", required=True)
     ini.add_argument("--skills", default="")
     ini.add_argument("--mods", default="")
@@ -459,8 +492,9 @@ def add_commands(sub) -> None:
     ini.add_argument("--words", default="")
     ini.add_argument("--oauth", action="store_true")
     jn = sub.add_parser("join")
-    jn.add_argument("--backend", choices=["git", "notion"], default="git")
+    jn.add_argument("--backend", choices=["git", "notion", "folder"], default="git")
     jn.add_argument("--page")
+    jn.add_argument("--folder")
     jn.add_argument("--remote")
     jn.add_argument("--username")
     jn.add_argument("--pc", required=True)
@@ -484,6 +518,14 @@ def _split(text: str) -> List[str]:
 
 
 def run(p: Paths, args) -> dict:
+    if args.cmd == "init" and args.backend == "folder":
+        return init(p, pc=args.pc, skills=_split(args.skills), mods=_split(args.mods), keys=_split(args.keys),
+                    claude_md=args.claude_md, require_approval=args.require_approval, backend="folder",
+                    folder=args.folder, words=_split(args.words))
+    if args.cmd == "join" and args.backend == "folder":
+        return join(p, pc=args.pc, words=_split(args.words), receive_only=args.receive_only,
+                    require_approval=args.require_approval, backend="folder", folder=args.folder,
+                    managed_settings=os.environ.get("CLAUDE_SYNC_MANAGED_SETTINGS", MANAGED_SETTINGS))
     if args.cmd == "init":
         notion = args.backend == "notion"
         if not notion and not args.remote:

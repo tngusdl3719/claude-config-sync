@@ -2,11 +2,24 @@ import Foundation
 
 /// The storages the app offers: two git hosts (the engine treats them alike) and Notion.
 public enum StorageKind: String, CaseIterable, Identifiable, Sendable {
-    case gitlab, github, notion
+    case gitlab, github, notion, folder
 
     public var id: Self { self }
-    public var title: String { self == .gitlab ? "GitLab" : self == .github ? "GitHub" : "Notion" }
-    public var backend: Backend { self == .notion ? .notion : .git }
+    public var title: String {
+        switch self {
+        case .gitlab: return "GitLab"
+        case .github: return "GitHub"
+        case .notion: return "Notion"
+        case .folder: return L10n.t("동기화 폴더", "Sync folder")
+        }
+    }
+    public var backend: Backend {
+        switch self {
+        case .gitlab, .github: return .git
+        case .notion: return .notion
+        case .folder: return .folder
+        }
+    }
 
     /// One line on the storage page's list.
     public var blurb: String {
@@ -14,22 +27,27 @@ public enum StorageKind: String, CaseIterable, Identifiable, Sendable {
         case .gitlab: return L10n.t("GitLab 저장소에 액세스 토큰으로 올리고 받아요", "A GitLab repository, with an access token")
         case .github: return L10n.t("GitHub 비공개 저장소에 토큰으로 올리고 받아요", "A private GitHub repository, with a token")
         case .notion: return L10n.t("Notion 페이지에 로그인해서 올리고 받아요", "A Notion page you sign in to")
+        case .folder: return L10n.t("iCloud Drive·Dropbox·Google Drive 같은 동기화 폴더에 파일로 올리고 받아요",
+                                    "A folder a sync app carries (iCloud Drive, Dropbox, Google Drive…), as files")
         }
     }
 
-    /// The title of the sheet that moves this PC here (all three names end in a consonant: 으로).
-    public var moveTitle: String { L10n.t("\(title)으로 옮기기", "Move to \(title)") }
+    /// The title of the sheet that moves this PC here (GitLab, GitHub, Notion take 으로; 폴더, 로).
+    public var moveTitle: String {
+        self == .folder ? L10n.t("동기화 폴더로 옮기기", "Move to a sync folder") : L10n.t("\(title)으로 옮기기", "Move to \(title)")
+    }
 
     /// What a configured PC uses (a git remote on github.com is GitHub; any other git host, GitLab-like).
     public static func of(_ storage: Storage?) -> StorageKind {
         guard let storage else { return .gitlab }
         if storage.backend == .notion { return .notion }
+        if storage.backend == .folder { return .folder }
         return Wizard.isGitHub(storage.remote) ? .github : .gitlab
     }
 
     /// The git host a typed address is on, so its help matches it; until one is typed, the tab chosen.
     public static func forAddress(_ text: String, chosen: StorageKind) -> StorageKind {
-        guard chosen != .notion, case .ok(let repo) = Wizard.checkRepoURL(text) else { return chosen }
+        guard chosen.backend == .git, case .ok(let repo) = Wizard.checkRepoURL(text) else { return chosen }
         return Wizard.isGitHub(repo) ? .github : .gitlab
     }
 }

@@ -1,8 +1,5 @@
-"""The shared history kept in a Notion database: one row per upload, each carrying a git bundle.
-
-Rows have minute-precision times, so order comes from git ancestry: the remote tip is the newest
-row head that no other row head contains. Every 30 rows one row carries the whole history, and a
-PC reads from the latest such row onward.
+"""The shared history kept in a Notion database: one row per upload, each carrying a git bundle
+(rowstore has how rows make a history). Rows have minute-precision times; order comes from git ancestry.
 """
 from __future__ import annotations
 
@@ -11,15 +8,14 @@ import json
 import os
 import secrets
 import signal
-import shutil
 import subprocess
-import tempfile
 import time
 import zlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from . import rowstore
 from .lang import t
 from .gitio import git, head
 from .notion import (DELTA_NAME, FULL_NAME, OAUTH_ERRORS, Client, NotionError, authorize_url, broker_url, files, oauth_token,
@@ -32,11 +28,8 @@ DB_TITLE = "Claude Sync"
 SECRET_HOST = "api.notion.com"
 SECRET_USER = "claude-sync"
 PART_BYTES = 4_500_000
-FULL_EVERY = 30
 FULL, DELTA = FULL_NAME, DELTA_NAME
-REMOTE_REF = "refs/remotes/origin/main"
-ROW_REFS = "refs/notion/"
-MOVED = ("다른 PC가 먼저 올렸어요. 다음 동기화에서 합쳐 올려요", "Another PC uploaded first. The next sync merges and uploads")
+ROW_REFS = rowstore.ROW_REFS
 # Signing in with Notion (spec §7): the fixed local address registered as the connection's redirect URI.
 OAUTH_PORT = 47821
 OAUTH_CLIENT, OAUTH_REFRESH = "oauth/client", "oauth/refresh"
@@ -381,19 +374,19 @@ def check_move(p: Paths, page_text: str, secret: str, *, receive_only: bool) -> 
         if receive_only:
             raise NotionError(404, "no_database", t("이 페이지에는 아직 공용 설정이 없어요. 올리는 PC를 먼저 이 페이지로 옮기세요", "This page has no shared settings yet. Move a PC that uploads to this page first"))
         return
-    rows = window(c, ds)
+    store = NotionRows(c, ds)
+    rows = store.window()
     if not rows:
         return
     try:
-        absorb(p, c, rows)
-        theirs, current = tip(p, rows), head(p)
+        rowstore.absorb(p, store, rows)
+        theirs, current = rowstore.tip(p, rows), head(p)
         if theirs is None:
             raise NotionError(409, "unreadable", t("이 페이지의 공용 설정을 받지 못했어요. 잠시 뒤 다시 하세요", "Could not fetch this page's shared settings. Try again in a moment"))
         if current and not git(p, "merge-base", theirs, current, check=False).stdout.strip():
             raise NotionError(409, "other_history", t(*OTHER_HISTORY))
     finally:
-        for name in git(p, "for-each-ref", "--format=%(refname)", ROW_REFS).stdout.split():
-            git(p, "update-ref", "-d", name, check=False)
+        rowstore.forget_rows(p)
 
 
 def connect(p: Paths, s: State, page_text: str, secret: str, *, create: bool, require_empty: bool = False,
@@ -453,164 +446,66 @@ def window(c: Client, ds: str) -> List[dict]:
     return sorted(rows, key=_key)
 
 
-def _head(row: dict) -> str:
-    return text(row, "Head").strip()
-
-
-def _present(p: Paths, sha: str) -> bool:
-    return bool(sha) and git(p, "cat-file", "-e", "%s^{commit}" % sha, check=False).returncode == 0
-
-
-def _ancestor(p: Paths, a: str, b: str) -> bool:
-    return git(p, "merge-base", "--is-ancestor", a, b, check=False).returncode == 0
-
-
 def _part_data(name: str, data: bytes) -> bytes:
     """'.gz' parts are gzip files of their own; any other name holds the bundle bytes as they are."""
     return gzip.decompress(data) if name.endswith(".gz") else data
 
 
-def _receive(p: Paths, c: Client, row: dict, tmp: str) -> None:
-    parts = sorted(files(row, "묶음"), key=lambda f: f["name"])
-    path = os.path.join(tmp, plain(row["id"]) + ".bundle")
-    with open(path, "wb") as f:
-        for part in parts:
-            data = c.download(part["url"])
-            try:
-                f.write(_part_data(part["name"], data))
-            except (OSError, EOFError, zlib.error):
-                return  # a damaged part: the row is skipped like any bundle that does not verify
-    if git(p, "bundle", "verify", "-q", path, check=False).returncode != 0:
-        return  # its base is not here yet (or the row is damaged): later, or never
-    ref = ROW_REFS + plain(row["id"])
-    if git(p, "fetch", "-q", "--no-tags", path, "HEAD:%s" % ref, check=False).returncode != 0:
-        return
-    if git(p, "rev-parse", ref, check=False).stdout.strip() != _head(row):
-        git(p, "update-ref", "-d", ref, check=False)
+class NotionRows(rowstore.Store):
+    """The rows of a page's "Claude Sync" database."""
 
+    def __init__(self, c: Client, ds: str):
+        self.c, self.ds = c, ds
+        self.raw: dict = {}
 
-def absorb(p: Paths, c: Client, rows: List[dict]) -> None:
-    """Fetch every row whose head is missing, bases first; full rows before the rest."""
-    pending = [r for r in rows if _head(r)]
-    os.makedirs(p.sync_dir, exist_ok=True)
-    tmp = tempfile.mkdtemp(prefix="notion-", dir=p.sync_dir)
-    try:
-        while True:
-            pending = [r for r in pending if not _present(p, _head(r))]
-            ready = [r for r in pending if select(r, "종류") == FULL or _present(p, text(r, "Base").strip())]
-            if not ready:
-                return
-            ready.sort(key=lambda r: (select(r, "종류") != FULL,) + _key(r))
-            row = ready[0]
-            _receive(p, c, row, tmp)
-            pending.remove(row)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    def window(self) -> List[rowstore.Row]:
+        rows = []
+        for r in window(self.c, self.ds):
+            row = rowstore.Row(id=plain(r["id"]), time=r.get("created_time", ""), full=select(r, "종류") == FULL,
+                               head=text(r, "Head").strip(), base=text(r, "Base").strip())
+            self.raw[row.id] = r
+            rows.append(row)
+        return rows
 
+    def read(self, row: rowstore.Row, path: str) -> bool:
+        parts = sorted(files(self.raw[row.id], "묶음"), key=lambda f: f["name"])
+        with open(path, "wb") as f:
+            for part in parts:
+                data = self.c.download(part["url"])
+                try:
+                    f.write(_part_data(part["name"], data))
+                except (OSError, EOFError, zlib.error):
+                    return False
+        return True
 
-def tip(p: Paths, rows: List[dict]) -> Optional[str]:
-    heads = {}
-    for r in rows:
-        h = _head(r)
-        if _present(p, h) and (h not in heads or _key(r) > heads[h]):
-            heads[h] = _key(r)
-    tips = [h for h in heads if not any(o != h and _ancestor(p, h, o) for o in heads)]
-    return max(tips, key=lambda h: heads[h]) if tips else None
-
-
-def _set_remote(p: Paths, sha: Optional[str], rows: List[dict]) -> None:
-    if sha:
-        git(p, "update-ref", REMOTE_REF, sha)
-    else:
-        git(p, "update-ref", "-d", REMOTE_REF, check=False)
-    keep = {ROW_REFS + plain(r["id"]) for r in rows}
-    for ref in git(p, "for-each-ref", "--format=%(refname)", ROW_REFS).stdout.split():
-        if ref not in keep:
-            git(p, "update-ref", "-d", ref, check=False)
+    def add(self, *, full: bool, head: str, base: str, summary: str, pc: str, data: bytes) -> None:
+        attached = []
+        for i in range(0, max(len(data), 1), PART_BYTES):
+            # The File Upload API only takes names with a known extension: each part is a gzip file of its own.
+            name = "part-%03d.gz" % (i // PART_BYTES + 1)
+            part = gzip.compress(data[i:i + PART_BYTES], mtime=0)
+            attached.append({"type": "file_upload", "file_upload": {"id": self.c.upload(name, part)}, "name": name})
+        self.c.create_row(self.ds, {
+            "요약": title(summary),
+            "PC": rich(pc),
+            "Head": rich(head),
+            "Base": rich(base),
+            "종류": {"select": {"name": FULL if full else DELTA}},
+            "묶음": {"files": attached},
+        })
 
 
 def fetch(p: Paths, s: State) -> Optional[str]:
     """Bring in new rows and point origin/main at the remote tip; an error text, or None."""
-    def work() -> None:
-        c, ds = _client(p, s)
-        rows = window(c, ds)
-        absorb(p, c, rows)
-        _set_remote(p, tip(p, rows), rows)
-
     try:
-        return _signed_in(p, s, work)
+        return _signed_in(p, s, lambda: rowstore.fetch(p, NotionRows(*_client(p, s))))
     except NotionError as e:
         return str(e)
-
-
-def _moved_since(p: Paths, c: Client, rows: List[dict], remote: Optional[str]) -> bool:
-    """Another PC uploaded after this run's fetch: take its tip as the remote and stop."""
-    absorb(p, c, rows)
-    now = tip(p, rows)
-    if now == remote:
-        return False
-    _set_remote(p, now, rows)
-    return True
-
-
-def _needs_full(p: Paths, rows: List[dict], remote: Optional[str]) -> bool:
-    fulls = [r for r in rows if select(r, "종류") == FULL and _present(p, _head(r))]
-    if remote is None or not fulls:
-        return True
-    base = max(fulls, key=_key)
-    for r in fulls:
-        if _ancestor(p, _head(base), _head(r)) and _head(r) != _head(base):
-            base = r
-    since = {_head(r) for r in rows if _present(p, _head(r)) and _head(r) != _head(base)
-             and _ancestor(p, _head(base), _head(r))}
-    return len(since) >= FULL_EVERY
-
-
-def _summary(p: Paths, sha: str) -> str:
-    subject = git(p, "log", "-1", "--format=%s", sha).stdout.strip()
-    if subject.startswith("sync: "):
-        subject = subject.split(": ", 2)[-1]
-    return subject or "변경"
 
 
 def push(p: Paths, s: State, remote: Optional[str], current: str) -> Optional[str]:
     """Upload HEAD (== current) as one row; an error text, or None."""
     try:
-        return _signed_in(p, s, lambda: _push(p, s, remote, current))
+        return _signed_in(p, s, lambda: rowstore.push(p, s.pc_name, NotionRows(*_client(p, s)), remote, current))
     except NotionError as e:
         return str(e)
-
-
-def _push(p: Paths, s: State, remote: Optional[str], current: str) -> Optional[str]:
-    c, ds = _client(p, s)
-    rows = window(c, ds)
-    if _moved_since(p, c, rows, remote):
-        return t(*MOVED)
-    full = _needs_full(p, rows, remote)
-    os.makedirs(p.sync_dir, exist_ok=True)
-    tmp = tempfile.mkdtemp(prefix="notion-", dir=p.sync_dir)
-    try:
-        path = os.path.join(tmp, "out.bundle")
-        spec = ["HEAD"] if full else ["HEAD", "^%s" % remote]
-        git(p, "bundle", "create", "-q", path, *spec)
-        with open(path, "rb") as f:
-            data = f.read()
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    attached = []
-    for i in range(0, max(len(data), 1), PART_BYTES):
-        # The File Upload API only takes names with a known extension: each part is a gzip file of its own.
-        name = "part-%03d.gz" % (i // PART_BYTES + 1)
-        part = gzip.compress(data[i:i + PART_BYTES], mtime=0)
-        attached.append({"type": "file_upload", "file_upload": {"id": c.upload(name, part)}, "name": name})
-    c.create_row(ds, {
-        "요약": title(_summary(p, current)),
-        "PC": rich(s.pc_name),
-        "Head": rich(current),
-        "Base": rich("" if full else remote or ""),
-        "종류": {"select": {"name": FULL if full else DELTA}},
-        "묶음": {"files": attached},
-    })
-    git(p, "update-ref", REMOTE_REF, current)
-    return None
-

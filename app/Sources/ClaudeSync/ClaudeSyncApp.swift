@@ -49,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     try? await Task.sleep(for: .seconds(2))
                     Windows.snapshot("main", to: "\(dir)/\(section.rawValue).png")
                 }
-                for mode in [StorageChangeView.Mode.move(.notion), .reconnect] {
+                for mode in [StorageChangeView.Mode.move(.notion), .move(.folder), .reconnect] {
                     Windows.show("storage-\(mode.id)", title: L10n.t("저장소", "Storage"), size: NSSize(width: 540, height: 480)) {
                         StorageChangeView(mode: mode).environment(self.model)
                     }

@@ -28,6 +28,7 @@ struct WizardView: View {
     @State private var repo = ""
     @State private var pageText = ""
     @State private var page = ""
+    @State private var folderText = ""
     @State private var tokenText = ""
     @State private var receiveOnly = false
     /// The app's Notion public connection; nil in a build without one (then only the secret-key way).
@@ -92,6 +93,11 @@ struct WizardView: View {
                 Link(gitKind == .github ? L10n.t("GitHub에서 새 저장소 만들기", "Make a new repository on GitHub")
                                         : L10n.t("GitLab에서 새 프로젝트 만들기", "Make a new project on GitLab"),
                      destination: Wizard.newRepoPage(gitKind))
+            } else if backend == .folder {
+                FolderChoiceView(folder: $folderText, intro: path == .first
+                    ? L10n.t("공용 설정을 둘 폴더를 고르세요. 고른 곳 안에 \"Claude Sync\" 폴더를 만들어 써요.",
+                             "Choose where the shared settings go. A \"Claude Sync\" folder inside it is used.")
+                    : L10n.t("첫 PC가 고른 것과 같은 폴더를 고르세요.", "Choose the same folder the first PC chose."))
             } else if signingIn {
                 notionSignIn
             } else {
@@ -158,6 +164,9 @@ struct WizardView: View {
                 Text(backend == .notion
                      ? L10n.t("회사 PC라면 받기 전용을 권해요. Notion으로 올리기를 켤지는 회사 규정을 보고 정하세요.",
                               "Receive only is advised on a work PC. Whether to send to Notion is for your company's rules to decide.")
+                     : backend == .folder
+                     ? L10n.t("회사 PC라면 받기 전용을 권해요. 동기화 폴더로 올리기를 켤지는 회사 규정을 보고 정하세요.",
+                              "Receive only is advised on a work PC. Whether to send to a sync folder is for your company's rules to decide.")
                      : L10n.t("회사 PC처럼 외부로 올리기가 막혀 있거나 회사 정보가 나가면 안 되는 PC라면 켜 두세요.",
                               "Keep it on for a PC that cannot send out, or whose company information must not leave, like a work PC."))
                     .font(.caption)
@@ -313,7 +322,7 @@ struct WizardView: View {
         switch step {
         case .repo: step = .start
         case .token: step = .repo
-        case .name: step = signingIn ? .repo : .token
+        case .name: step = signingIn || backend == .folder ? .repo : .token
         case .words: step = .name
         case .choose: step = .words
         default: break
@@ -323,6 +332,8 @@ struct WizardView: View {
     private func next() {
         problem = nil
         switch step {
+        case .repo where backend == .folder:
+            if folderText.isEmpty { problem = L10n.t("폴더를 골라 주세요", "Choose a folder") } else { step = .name }
         case .repo where signingIn:
             if loggingIn {
                 problem = L10n.t("Notion 연결을 기다리는 중이에요", "Still waiting for Notion")
@@ -373,7 +384,8 @@ struct WizardView: View {
         let token = Wizard.cleanToken(tokenText)
         tokenText = ""
         let signedIn = signingIn
-        guard signedIn || !token.isEmpty else {
+        let viaFolder = backend == .folder
+        guard signedIn || viaFolder || !token.isEmpty else {
             step = .token
             problem = backend == .git ? L10n.t("토큰을 다시 붙여 넣어 주세요", "Paste the token again") : L10n.t("비밀 키를 다시 붙여 넣어 주세요", "Paste the secret key again")
             return
@@ -385,6 +397,8 @@ struct WizardView: View {
                                 backend: backend, notionPage: page)
         choice.words = words
         choice.notionSignedIn = signedIn
+        choice.folder = folderText
+        let folder = folderText
         let isFirst = path == .first
         let pc = pcName
         let remote = repo
@@ -395,6 +409,8 @@ struct WizardView: View {
             let outcome: Result<JoinResult, EngineFailure>? = await model.exclusive(L10n.t("설정하는 중", "Setting up")) {
                 if isFirst {
                     return await client.initFirstPC(choice, token: token)
+                } else if viaFolder {
+                    return await client.joinFolder(folder: folder, pc: pc, words: words, receiveOnly: onlyReceive)
                 } else if viaNotion {
                     return await client.joinNotion(page: notionPage, pc: pc, words: words, receiveOnly: onlyReceive,
                                                    secret: signedIn ? nil : token)
@@ -409,13 +425,13 @@ struct WizardView: View {
             case .failure(let f):
                 // The secret was cleared when it was handed over: ask for it again (or sign in again).
                 problem = f.message
-                step = signedIn ? .repo : .token
+                step = signedIn || viaFolder ? .repo : .token
                 return
             case nil:
-                problem = signedIn ? L10n.t("다른 작업이 끝난 뒤 다시 시도해 주세요", "Try again when the other task is done")
+                problem = signedIn || viaFolder ? L10n.t("다른 작업이 끝난 뒤 다시 시도해 주세요", "Try again when the other task is done")
                     : L10n.t("다른 작업이 끝난 뒤 다시 시도해 주세요. 비밀 키(토큰)도 다시 붙여 넣어 주세요",
                              "Try again when the other task is done, and paste the secret key (token) again")
-                step = signedIn ? .repo : .token
+                step = signedIn || viaFolder ? .repo : .token
                 return
             }
             step = .result

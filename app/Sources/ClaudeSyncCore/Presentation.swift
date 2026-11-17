@@ -47,12 +47,13 @@ public enum Presentation {
     /// The label of the link that opens the storage in the browser.
     public static func storageLink(_ s: Storage?) -> String {
         if s?.backend == .notion { return L10n.t("Notion에서 페이지 열기", "Open the page in Notion") }
+        if s?.backend == .folder { return L10n.t("Finder에서 열기", "Open in Finder") }
         let title = storage(s).title
         return ["GitHub", "GitLab"].contains(title) ? L10n.t("\(title)에서 열기", "Open in \(title)")
                                                     : L10n.t("브라우저에서 열기", "Open in the browser")
     }
 
-    public static func storage(_ s: Storage?) -> StorageText {
+    public static func storage(_ s: Storage?, home: String = NSHomeDirectory()) -> StorageText {
         guard let s else { return StorageText(title: L10n.t("저장소 정보 없음", "No storage info"), detail: "") }
         switch s.backend {
         case .git:
@@ -66,6 +67,8 @@ public enum Presentation {
                 : L10n.t("비밀 키로 연결", "Connected with a secret key")
             return StorageText(title: "Notion", detail: s.page.isEmpty ? how
                                : "\(how) · \(L10n.t("페이지", "page")) \(s.page.prefix(8))…")
+        case .folder:
+            return StorageText(title: StorageKind.folder.title, detail: CloudFolders.describe(s.folder, home: home))
         }
     }
 

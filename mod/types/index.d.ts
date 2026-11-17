@@ -28,7 +28,7 @@ export type Status = {
   auto_enabled: boolean
   require_approval: boolean
   receive_only?: boolean
-  backend?: 'git' | 'notion'
+  backend?: 'git' | 'notion' | 'folder'
   others: { pc: string; time: number }[]
   items: {
     claude_md: { state: ItemState }

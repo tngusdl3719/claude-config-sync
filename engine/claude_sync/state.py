@@ -21,12 +21,14 @@ class State:
     require_approval: bool = False
     # A PC whose network refuses uploads (or that must never send): receive, never push.
     receive_only: bool = False
-    # Where the shared history travels: "git" (origin) or "notion" (a database of git bundles).
+    # Where the shared history travels: "git" (origin), "notion" (a database of git bundles) or "folder"
+    # (git bundles in a synced folder: folder_path).
     backend: str = "git"
     notion_page_id: Optional[str] = None
     notion_data_source_id: Optional[str] = None
     # How this PC reaches Notion: "secret" (an internal connection's key) or "oauth" (signed in, refreshable).
     notion_auth: str = "secret"
+    folder_path: Optional[str] = None
     # JSON-encoded settings path -> value last applied on this PC
     baseline: Dict[str, Any] = field(default_factory=dict)
     conflicts: List[dict] = field(default_factory=list)

@@ -94,7 +94,7 @@ struct NotConfiguredPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(L10n.t("아직 이 Mac에 동기화 설정이 없어요.", "Sync is not set up on this Mac yet.")).font(.title2.bold())
-            Text(L10n.t("다른 Mac의 설정을 받거나, 이 Mac을 첫 PC로 시작하세요. GitLab과 Notion 중에서 고를 수 있어요.", "Receive another Mac's settings, or start with this Mac as the first PC. GitLab or Notion, your choice."))
+            Text(L10n.t("다른 Mac의 설정을 받거나, 이 Mac을 첫 PC로 시작하세요. GitLab·GitHub·Notion·동기화 폴더 중에서 고를 수 있어요.", "Receive another Mac's settings, or start with this Mac as the first PC. GitLab, GitHub, Notion or a sync folder, your choice."))
                 .foregroundStyle(.secondary)
             Button(L10n.t("설정 시작하기…", "Set up…")) { WizardWindow.open(model) }
                 .buttonStyle(.borderedProminent)

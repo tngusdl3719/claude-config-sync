@@ -37,8 +37,10 @@ import Testing
         L10n.$override.withValue(.ko) {
             #expect(StorageKind.allCases.map(\.blurb) == ["GitLab 저장소에 액세스 토큰으로 올리고 받아요",
                                                            "GitHub 비공개 저장소에 토큰으로 올리고 받아요",
-                                                           "Notion 페이지에 로그인해서 올리고 받아요"])
-            #expect(StorageKind.allCases.map(\.moveTitle) == ["GitLab으로 옮기기", "GitHub으로 옮기기", "Notion으로 옮기기"])
+                                                           "Notion 페이지에 로그인해서 올리고 받아요",
+                                                           "iCloud Drive·Dropbox·Google Drive 같은 동기화 폴더에 파일로 올리고 받아요"])
+            #expect(StorageKind.allCases.map(\.moveTitle) == ["GitLab으로 옮기기", "GitHub으로 옮기기", "Notion으로 옮기기",
+                                                               "동기화 폴더로 옮기기"])
         }
         L10n.$override.withValue(.en) {
             #expect(StorageKind.notion.blurb == "A Notion page you sign in to")
@@ -47,8 +49,10 @@ import Testing
     }
 
     @Test func storageKinds() {
-        #expect(StorageKind.allCases.map(\.title) == ["GitLab", "GitHub", "Notion"])
-        #expect(StorageKind.allCases.map(\.backend) == [.git, .git, .notion])
+        L10n.$override.withValue(.ko) {
+            #expect(StorageKind.allCases.map(\.title) == ["GitLab", "GitHub", "Notion", "동기화 폴더"])
+        }
+        #expect(StorageKind.allCases.map(\.backend) == [.git, .git, .notion, .folder])
         #expect(StorageKind.of(Storage(backend: .git, remote: "https://github.com/me/c.git")) == .github)
         #expect(StorageKind.of(Storage(backend: .git, remote: "https://gitlab.com/me/c.git")) == .gitlab)
         #expect(StorageKind.of(Storage(backend: .git, remote: "https://git.example.com/me/c.git")) == .gitlab)

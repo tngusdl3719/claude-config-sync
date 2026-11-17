@@ -31,7 +31,7 @@ public enum Timeouts {
 
 /// Where the shared history lives.
 public enum Backend: String, Equatable, Sendable {
-    case git, notion
+    case git, notion, folder
 }
 
 /// A Notion public connection (spec §7) for 'Notion으로 연결'. Its secret is never inside the app, which
@@ -150,6 +150,8 @@ public struct InitChoice: Equatable, Sendable {
     public var words: [String] = []
     /// Notion reached through 'Notion으로 연결' (the engine holds the token) rather than a pasted secret.
     public var notionSignedIn = false
+    /// A folder storage: the folder (its sync app carries the files).
+    public var folder = ""
 
     public init(remote: String, username: String, pc: String, skills: [String], mods: [String], keys: [String],
                 moveClaudeMd: Bool, requireApproval: Bool, backend: Backend = .git, notionPage: String = "") {
@@ -279,6 +281,13 @@ public struct EngineClient: Sendable {
         return await call(JoinResult.self, args, stdin: secret.map(Self.stdinLine), timeout: Timeouts.setup)
     }
 
+    /// A new PC reading a synced folder.
+    public func joinFolder(folder: String, pc: String, words: [String], receiveOnly: Bool) async -> Result<JoinResult, EngineFailure> {
+        var args = ["join", "--backend", "folder", "--folder", folder, "--pc", pc, "--words", words.joined(separator: ",")]
+        if receiveOnly { args.append("--receive-only") }
+        return await call(JoinResult.self, args, timeout: Timeouts.setup)
+    }
+
     /// 'Notion으로 연결': the engine opens the browser and waits (up to 5 minutes) for the consent.
     public func notionLogin(_ client: NotionOAuthClient) async -> Result<NotionLogin, EngineFailure> {
         let line = (try? JSONSerialization.data(withJSONObject: client.engineInput))
@@ -300,6 +309,11 @@ public struct EngineClient: Sendable {
         return await call(EngineOK.self, args, stdin: secret.map(Self.stdinLine), timeout: Timeouts.setup)
     }
 
+    /// Move this PC to a synced folder (or point it at the folder again).
+    public func setFolderStorage(folder: String) async -> Result<EngineOK, EngineFailure> {
+        await call(EngineOK.self, ["set-remote", "--backend", "folder", "--folder", folder], timeout: Timeouts.setup)
+    }
+
     /// Puts the engine this app carries (`folder`) into the shared repo when it is newer; run with that engine.
     public func adoptEngine(from folder: String) async -> Result<AdoptResult, EngineFailure> {
         await call(AdoptResult.self, ["adopt-engine", folder], timeout: Timeouts.quick)
@@ -310,8 +324,8 @@ public struct EngineClient: Sendable {
     }
 
     public func initFirstPC(_ c: InitChoice, token: String) async -> Result<JoinResult, EngineFailure> {
-        var args = c.backend == .notion
-            ? ["init", "--backend", "notion", "--page", c.notionPage, "--pc", c.pc]
+        var args = c.backend == .notion ? ["init", "--backend", "notion", "--page", c.notionPage, "--pc", c.pc]
+            : c.backend == .folder ? ["init", "--backend", "folder", "--folder", c.folder, "--pc", c.pc]
             : ["init", "--remote", c.remote, "--username", c.username, "--pc", c.pc]
         args += ["--skills", c.skills.joined(separator: ","), "--mods", c.mods.joined(separator: ","),
                  "--keys", c.keys.joined(separator: ","), "--claude-md", c.moveClaudeMd ? "move" : "keep"]
@@ -322,6 +336,7 @@ public struct EngineClient: Sendable {
             args.append("--oauth")
             return await call(JoinResult.self, args, timeout: Timeouts.setup)
         }
+        if c.backend == .folder { return await call(JoinResult.self, args, timeout: Timeouts.setup) }
         return await call(JoinResult.self, args, stdin: Self.stdinLine(token), timeout: Timeouts.setup)
     }
 

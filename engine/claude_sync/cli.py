@@ -53,8 +53,9 @@ def _parser() -> argparse.ArgumentParser:
     sr = sub.add_parser("set-remote")
     sr.add_argument("url", nargs="?")
     sr.add_argument("--username")
-    sr.add_argument("--backend", choices=["git", "notion"], default="git")
+    sr.add_argument("--backend", choices=["git", "notion", "folder"], default="git")
     sr.add_argument("--page")
+    sr.add_argument("--folder")
     sr.add_argument("--oauth", action="store_true")
     setup_mod.add_commands(sub)
     return ap
@@ -100,6 +101,8 @@ def run(args) -> object:
         actions.set_auto(p, args.value == "on")
         return report.status(p)
     if cmd == "set-remote":
+        if args.backend == "folder":
+            return setup_mod.use_folder(p, args.folder or "")
         # The token arrives on stdin only, so it never shows up in a process list or shell history.
         if args.backend == "notion":
             if args.oauth:  # the token the last 'Notion으로 연결' left in the keychain

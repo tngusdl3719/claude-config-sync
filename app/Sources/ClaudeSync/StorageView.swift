@@ -50,7 +50,8 @@ struct StoragePane: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Label(kind.title, systemImage: kind == .notion ? "doc.text" : "server.rack").font(.title3.bold())
+                    Label(kind.title, systemImage: kind == .notion ? "doc.text" : kind == .folder ? "folder" : "server.rack")
+                        .font(.title3.bold())
                     Spacer()
                     // Only switching on does something: the one in use goes off when another comes on.
                     Toggle(kind.title, isOn: Binding(get: { on }, set: { if $0 && !on { change = .move(kind) } }))
@@ -86,6 +87,7 @@ struct StoragePane: View {
     static func link(_ s: Storage?) -> URL? {
         guard let s else { return nil }
         if s.backend == .notion { return s.url.isEmpty ? nil : URL(string: s.url) }
+        if s.backend == .folder { return s.folder.isEmpty ? nil : URL(fileURLWithPath: s.folder) }
         guard s.remote.hasPrefix("https://") else { return nil }
         return URL(string: s.remote.hasSuffix(".git") ? String(s.remote.dropLast(4)) : s.remote)
     }
@@ -114,6 +116,7 @@ struct StorageChangeView: View {
     @State private var username = ""
     @State private var tokenText = ""
     @State private var pageText = ""
+    @State private var folderText = ""
     @State private var useSecretKey = false
     @State private var login: NotionLogin?
     @State private var loginPage = ""
@@ -136,6 +139,12 @@ struct StorageChangeView: View {
             Text(moving ? kind.moveTitle : L10n.t("다시 연결", "Connect again")).font(.title2.bold())
             if backend == .git {
                 gitFields
+            } else if backend == .folder {
+                FolderChoiceView(folder: $folderText, intro: mode == .reconnect
+                    ? L10n.t("이 PC가 쓰는 폴더예요. 폴더를 옮겼다면 새 자리를 골라 주세요.",
+                             "The folder this PC uses. If the folder moved, choose where it is now.")
+                    : L10n.t("공용 설정을 둘 폴더를 고르세요. 고른 곳 안에 \"Claude Sync\" 폴더를 만들어 써요.",
+                             "Choose where the shared settings go. A \"Claude Sync\" folder inside it is used."))
             } else if signingIn, let oauthClient {
                 NotionSignInView(
                     oauthClient: oauthClient,
@@ -239,7 +248,8 @@ struct StorageChangeView: View {
         if case .move(let target) = mode { kind = target } else { kind = current }
         username = (storage?.username.isEmpty == false ? storage?.username : model.status?.pc) ?? ""
         guard mode == .reconnect else { return }  // moving starts from empty fields
-        if current != .notion { repoText = storage?.remote ?? "" }
+        if current == .folder { folderText = storage?.folder ?? "" }
+        if current.backend == .git { repoText = storage?.remote ?? "" }
         if current == .notion {
             pageText = storage?.page ?? ""
             loginPage = storage?.page ?? ""
@@ -261,6 +271,10 @@ struct StorageChangeView: View {
             guard !user.isEmpty else { problem = L10n.t("토큰 사용자 이름을 넣어 주세요", "Enter the token user name"); return }
             guard !token.isEmpty else { problem = L10n.t("토큰을 붙여 넣어 주세요", "Paste the token"); return }
             action = { await $0.setGitStorage(remote: repo, username: user, token: token) }
+        } else if backend == .folder {
+            let folder = folderText
+            guard !folder.isEmpty else { problem = L10n.t("폴더를 골라 주세요", "Choose a folder"); return }
+            action = { await $0.setFolderStorage(folder: folder) }
         } else if signingIn {
             guard login != nil else { problem = L10n.t("먼저 'Notion으로 연결'을 눌러 주세요", "Click 'Connect with Notion' first"); return }
             guard !loginPage.isEmpty else { problem = L10n.t("동기화에 쓸 페이지를 골라 주세요", "Pick the page to sync with"); return }

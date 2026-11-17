@@ -9,7 +9,7 @@ from unittest import mock
 from helpers import TempCase, make_home, read_json, write
 from fake_notion import TOKEN, FakeNotion
 
-from claude_sync import notion_store
+from claude_sync import notion_store, rowstore
 from claude_sync.claudemd import IMPORT_LINE
 from claude_sync.gitio import git, head
 from claude_sync.paths import Paths
@@ -110,7 +110,7 @@ class NotionSyncTest(NotionWorld):
         self.assertNotIn("corp", history)
 
     def test_full_row_every_n_rows_and_new_pc_reads_from_the_latest_one(self):
-        with mock.patch.object(notion_store, "FULL_EVERY", 2):
+        with mock.patch.object(rowstore, "FULL_EVERY", 2):
             for i in range(5):
                 edit_settings(self.a, effortLevel="v%d" % i)
                 self.assertEqual(run_sync(self.a, auto=False, now=NOW + 1 + i).last_result, "ok")
@@ -157,7 +157,7 @@ class NotionSyncTest(NotionWorld):
         edit_settings(self.a, theme="light")
         edit_settings(b, effortLevel="high")
         # Both pass the pre-upload check before either row exists (the race the check cannot close).
-        with mock.patch.object(notion_store, "_moved_since", return_value=False):
+        with mock.patch.object(rowstore, "moved_since", return_value=False):
             self.assertEqual(run_sync(self.a, auto=False, now=NOW + 1).last_result, "ok")
             with mock.patch.object(notion_store, "fetch", return_value=None):
                 self.assertEqual(run_sync(b, auto=False, now=NOW + 1).last_result, "ok")
