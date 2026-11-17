@@ -128,23 +128,100 @@ public enum UpdateFailure: Error, Equatable, Sendable {
 
 /// Where taking an update stands.
 public enum UpdatePhase: Equatable, Sendable {
-    case idle, checking, upToDate, downloading(String), ready(String), failed(UpdateFailure)
+    /// `downloading` carries how much of the dmg has come (0…1), nil while its size is not known.
+    case idle, checking, upToDate, downloading(String, Double?), preparing(String), ready(String), installing(String),
+         failed(UpdateFailure)
+
+    /// The bar under the status: none, one that only shows work going on, or how far the download has got.
+    public var bar: UpdateBar? {
+        switch self {
+        case .checking, .downloading(_, .none), .preparing, .installing: return .busy
+        case .downloading(_, let part?): return .part(part)
+        case .idle, .upToDate, .ready, .failed: return nil
+        }
+    }
+}
+
+public enum UpdateBar: Equatable, Sendable {
+    case busy, part(Double)
 }
 
 extension Presentation {
-    public static func update(_ phase: UpdatePhase) -> String {
+    /// `automatic`: whether a downloaded update goes in by itself (the settings' switch).
+    public static func update(_ phase: UpdatePhase, automatic: Bool = true) -> String {
         switch phase {
         case .idle: return L10n.t("아직 확인하지 않았어요", "Not checked yet")
         case .checking: return L10n.t("업데이트 확인 중…", "Checking for updates…")
         case .upToDate: return L10n.t("최신 버전이에요 (\(AppInfo.version))", "Up to date (\(AppInfo.version))")
-        case .downloading(let v): return L10n.t("\(v) 받는 중…", "Downloading \(v)…")
-        case .ready(let v): return L10n.t("\(v)을 받아 두었어요. 창을 닫고 작업이 없을 때 설치하고 다시 시작해요",
-                                          "\(v) is ready. It installs and restarts once the windows are closed and nothing is running")
+        case .downloading(let v, let part):
+            let done = part.map { " \(Int(($0 * 100).rounded(.down)))%" } ?? ""
+            return L10n.t("\(v) 받는 중…", "Downloading \(v)…") + done
+        case .preparing(let v): return L10n.t("\(v) 서명을 확인하고 준비하는 중…", "Checking the signature of \(v)…")
+        case .ready(let v):
+            return automatic
+                ? L10n.t("새 버전(\(v))을 받아 두었어요. 하던 작업이 끝나면 설치하고 다시 시작해요",
+                         "\(v) is ready. It installs and restarts once the running work is done")
+                : L10n.t("새 버전(\(v))을 받아 두었어요. '설치하고 다시 시작'을 누르면 설치해요",
+                         "\(v) is ready. Press Install and restart to install it")
+        case .installing(let v): return L10n.t("\(v) 설치하는 중… 끝나면 다시 시작해요", "Installing \(v)… the app restarts when it is done")
         case .failed(let f):
             return f.whileChecking
                 ? L10n.t("업데이트를 확인하지 못했어요: ", "Could not check for updates: ") + f.text
                 : L10n.t("업데이트하지 못했어요: ", "Could not update: ") + f.text
         }
+    }
+}
+
+/// A download that says how far it has got: `progress` gets the part done (0…1, or nil once when the size is
+/// not known), only going forward, from the download's own thread. The file returned is the caller's to keep.
+public enum UpdateDownload {
+    public static func fetch(_ url: URL, progress: @escaping @Sendable (Double?) -> Void) async throws -> (URL, URLResponse) {
+        let watcher = DownloadWatcher(progress: progress)
+        let session = URLSession(configuration: .ephemeral, delegate: watcher, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        return try await withCheckedThrowingContinuation { done in
+            watcher.done = done
+            session.downloadTask(with: url).resume()
+        }
+    }
+}
+
+/// Called on the session's one delegate queue, one call at a time.
+private final class DownloadWatcher: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    let progress: @Sendable (Double?) -> Void
+    var done: CheckedContinuation<(URL, URLResponse), Error>?
+    private var shown: Double?
+    private var toldUnknown = false
+
+    init(progress: @escaping @Sendable (Double?) -> Void) { self.progress = progress }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten written: Int64, totalBytesExpectedToWrite expected: Int64) {
+        guard expected > 0 else {
+            if !toldUnknown { toldUnknown = true; progress(nil) }
+            return
+        }
+        let part = min(1, Double(written) / Double(expected))
+        if let shown, part < 1 && part - shown < 0.01 || part <= shown { return }  // a step of 1% at least
+        shown = part
+        progress(part)
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        // The session removes its file once this returns.
+        let kept = FileManager.default.temporaryDirectory.appendingPathComponent("ClaudeSync-\(UUID().uuidString).download")
+        do {
+            try FileManager.default.moveItem(at: location, to: kept)
+            done?.resume(returning: (kept, downloadTask.response ?? URLResponse()))
+        } catch {
+            done?.resume(throwing: error)
+        }
+        done = nil
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        done?.resume(throwing: error ?? URLError(.unknown))
+        done = nil
     }
 }
 

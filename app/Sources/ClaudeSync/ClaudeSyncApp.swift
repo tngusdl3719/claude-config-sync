@@ -23,10 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = ProcessInfo.processInfo.arguments
         model.start()
-        // Started at login, or again after a quiet update: no window (not even setup); the menu bar and the
-        // Dock open one when asked.
+        // Started at login, or again after an update: no window (not even setup) unless one was open before
+        // the update; the menu bar and the Dock open one when asked.
         if args.contains("--after-update") {
             model.say(L10n.t("Claude Sync를 \(AppInfo.version)(으)로 업데이트했어요", "Updated Claude Sync to \(AppInfo.version)"))
+            if args.contains("--show-window") { MainWindow.open(model, activate: false) }
         } else if !Self.launchedAtLogin() {
             MainWindow.open(model)
             if !model.isConfigured { WizardWindow.open(model) }
@@ -48,12 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     try? await Task.sleep(for: .seconds(2))
                     Windows.snapshot("main", to: "\(dir)/\(section.rawValue).png")
                 }
-                for mode in [StorageChangeView.Mode.move, .reconnect] {
-                    Windows.show("storage-\(mode.rawValue)", title: L10n.t("저장소", "Storage"), size: NSSize(width: 540, height: 480)) {
+                for mode in [StorageChangeView.Mode.move(.notion), .reconnect] {
+                    Windows.show("storage-\(mode.id)", title: L10n.t("저장소", "Storage"), size: NSSize(width: 540, height: 480)) {
                         StorageChangeView(mode: mode).environment(self.model)
                     }
                     try? await Task.sleep(for: .seconds(1))
-                    Windows.snapshot("storage-\(mode.rawValue)", to: "\(dir)/storage-\(mode.rawValue).png")
+                    Windows.snapshot("storage-\(mode.id)", to: "\(dir)/storage-\(mode.id).png")
                 }
                 NSApp.terminate(nil)
             }

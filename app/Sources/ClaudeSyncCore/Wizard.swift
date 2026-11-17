@@ -8,6 +8,18 @@ public enum StorageKind: String, CaseIterable, Identifiable, Sendable {
     public var title: String { self == .gitlab ? "GitLab" : self == .github ? "GitHub" : "Notion" }
     public var backend: Backend { self == .notion ? .notion : .git }
 
+    /// One line on the storage page's list.
+    public var blurb: String {
+        switch self {
+        case .gitlab: return L10n.t("GitLab 저장소에 액세스 토큰으로 올리고 받아요", "A GitLab repository, with an access token")
+        case .github: return L10n.t("GitHub 비공개 저장소에 토큰으로 올리고 받아요", "A private GitHub repository, with a token")
+        case .notion: return L10n.t("Notion 페이지에 로그인해서 올리고 받아요", "A Notion page you sign in to")
+        }
+    }
+
+    /// The title of the sheet that moves this PC here (all three names end in a consonant: 으로).
+    public var moveTitle: String { L10n.t("\(title)으로 옮기기", "Move to \(title)") }
+
     /// What a configured PC uses (a git remote on github.com is GitHub; any other git host, GitLab-like).
     public static func of(_ storage: Storage?) -> StorageKind {
         guard let storage else { return .gitlab }

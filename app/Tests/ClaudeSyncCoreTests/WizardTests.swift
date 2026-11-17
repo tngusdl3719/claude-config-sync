@@ -33,6 +33,19 @@ import Testing
                 == "https://github.com/settings/personal-access-tokens/new")
     }
 
+    @Test func eachStorageInTheListSaysWhatItIs() {
+        L10n.$override.withValue(.ko) {
+            #expect(StorageKind.allCases.map(\.blurb) == ["GitLab 저장소에 액세스 토큰으로 올리고 받아요",
+                                                           "GitHub 비공개 저장소에 토큰으로 올리고 받아요",
+                                                           "Notion 페이지에 로그인해서 올리고 받아요"])
+            #expect(StorageKind.allCases.map(\.moveTitle) == ["GitLab으로 옮기기", "GitHub으로 옮기기", "Notion으로 옮기기"])
+        }
+        L10n.$override.withValue(.en) {
+            #expect(StorageKind.notion.blurb == "A Notion page you sign in to")
+            #expect(StorageKind.github.moveTitle == "Move to GitHub")
+        }
+    }
+
     @Test func storageKinds() {
         #expect(StorageKind.allCases.map(\.title) == ["GitLab", "GitHub", "Notion"])
         #expect(StorageKind.allCases.map(\.backend) == [.git, .git, .notion])

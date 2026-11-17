@@ -106,6 +106,19 @@ import Testing
         #expect(try String(contentsOfFile: place.path("opened"), encoding: .utf8) == "-g \(target.path) --args --after-update\n")
     }
 
+    @Test func aWindowThatWasOpenComesBackAndTheAppInUseComesToTheFront() throws {
+        for (mode, expected) in [("window", "-g %@ --args --after-update --show-window\n"),
+                                 ("front", "%@ --args --after-update --show-window\n")] {
+            let place = try Place()
+            let target = try place.app("Claude Sync.app", says: "new")
+            let old = try place.app(".Claude Sync.app.incoming", says: "old")
+            #expect(try Self.run("/bin/bash", [Self.script, "999999", old.path, target.path, mode],
+                                 env: ["CLAUDE_SYNC_OPEN": try place.fakeOpen()]) == 0)
+            #expect(try String(contentsOfFile: place.path("opened"), encoding: .utf8)
+                    == expected.replacingOccurrences(of: "%@", with: target.path), "\(mode)")
+        }
+    }
+
     @Test func noRelaunchWhenTheAppIsQuitting() throws {
         let place = try Place()
         let target = try place.app("Claude Sync.app", says: "new")

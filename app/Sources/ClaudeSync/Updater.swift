@@ -5,8 +5,8 @@ import Observation
 
 /// Takes updates from GitHub quietly (the person chose this): checks soon after launch and once a day,
 /// downloads the release and checks its signature, unpacks the new app beside this one, and swaps it in
-/// when nothing is going on (no engine work, no window, the app not in front) or when the app quits.
-/// A Mac that cannot reach GitHub (a work Mac) only notes it. Turned off in the settings.
+/// right away (after any engine work) or when the app quits, then starts it again with its window if one was
+/// open. A Mac that cannot reach GitHub (a work Mac) only notes it. Turned off in the settings.
 @MainActor @Observable
 final class Updater {
     private(set) var phase: UpdatePhase = .idle
@@ -68,12 +68,7 @@ final class Updater {
 
     // MARK: checking and downloading
 
-    private var busy: Bool {
-        switch phase {
-        case .checking, .downloading: return true
-        default: return false
-        }
-    }
+    private var busy: Bool { phase.bar != nil }
 
     /// Asks GitHub for the latest release; a newer one is downloaded, checked and unpacked, then installed
     /// when the time is right (or with the settings' button).
@@ -98,8 +93,10 @@ final class Updater {
             if let staged, staged.version == offer.version {
                 phase = .ready(offer.version)
             } else {
-                phase = .downloading(offer.version)
-                staged = (offer.version, try await Self.stage(offer, in: Self.folder))
+                phase = .downloading(offer.version, nil)
+                staged = (offer.version, try await Self.stage(offer, in: Self.folder) { step in
+                    DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in self?.show(step) } }
+                })
                 phase = .ready(offer.version)
             }
             installIfIdle()
@@ -115,15 +112,25 @@ final class Updater {
         }
     }
 
-    /// Downloads the dmg and its signature into `<folder>/<version>/` and unpacks it there. Both files stay,
-    /// so a later start checks the signature again instead of trusting what it finds.
-    nonisolated private static func stage(_ offer: UpdateOffer, in folder: URL) async throws -> URL {
+    /// A step the download reports from its own thread, unless the update has moved past it meanwhile.
+    private func show(_ step: UpdatePhase) {
+        switch (phase, step) {
+        case (.downloading, .downloading), (.downloading, .preparing): phase = step
+        default: break
+        }
+    }
+
+    /// Downloads the dmg and its signature into `<folder>/<version>/` and unpacks it there, reporting each
+    /// step. Both files stay, so a later start checks the signature again instead of trusting what it finds.
+    nonisolated private static func stage(_ offer: UpdateOffer, in folder: URL,
+                                          report: @escaping @Sendable (UpdatePhase) -> Void) async throws -> URL {
         let fm = FileManager.default
         let dir = folder.appendingPathComponent(offer.version)
         try? fm.removeItem(at: dir)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         do {
-            let (downloaded, dmgResponse) = try await URLSession.shared.download(from: offer.dmg)
+            let version = offer.version
+            let (downloaded, dmgResponse) = try await UpdateDownload.fetch(offer.dmg) { report(.downloading(version, $0)) }
             guard offer.dmg.isFileURL || (dmgResponse as? HTTPURLResponse)?.statusCode == 200 else {
                 throw UpdateFailure.http((dmgResponse as? HTTPURLResponse)?.statusCode ?? 0)
             }
@@ -133,6 +140,7 @@ final class Updater {
                 throw UpdateFailure.http((sigResponse as? HTTPURLResponse)?.statusCode ?? 0)
             }
             try signature.write(to: dir.appendingPathComponent(dmgName + ".sig"))
+            report(.preparing(version))
             return try await unpack(dir, version: offer.version)
         } catch {
             try? fm.removeItem(at: dir)
@@ -169,7 +177,7 @@ final class Updater {
         }
         guard let (_, name) = kept else { return }
         let dir = Self.folder.appendingPathComponent(name)
-        phase = .downloading(name)
+        phase = .preparing(name)
         Task {
             do {
                 staged = (name, try await Self.unpack(dir, version: name))
@@ -184,27 +192,52 @@ final class Updater {
 
     // MARK: installing
 
-    /// Installs the unpacked update while the person is not using the app: no engine work, no window open,
-    /// the app not in front. Checked every few minutes and after each download.
+    /// How the app comes back after an update: in the background, with its window again, or in front.
+    enum Restart: String {
+        case quiet = "1", window, front, none = "0"
+    }
+
+    /// Installs the unpacked update as soon as no engine work runs and no setup or storage change is open.
+    /// Checked every few minutes and after each download; a window that was open comes back after the restart.
     func installIfIdle() {
-        guard enabled, staged != nil, !installing, isIdle(), !NSApp.isActive,
-              !NSApp.windows.contains(where: { $0.isVisible && $0.styleMask.contains(.titled) }) else { return }
-        install(relaunch: true)
+        guard enabled, staged != nil, mayRestart() else { return }
+        let windowOpen = NSApp.windows.contains { $0.isVisible && $0.styleMask.contains(.titled) }
+        install(restart: NSApp.isActive ? .front : windowOpen ? .window : .quiet, when: mayRestart)
     }
 
     /// The settings' button: now, whatever is open.
     func installNow() {
         guard isIdle() else { return }
-        install(relaunch: true)
+        install(restart: .front, when: isIdle)
+    }
+
+    /// No engine work, and no setup or storage change under way: their typing and a Notion sign-in waiting in
+    /// the browser would not survive a restart.
+    private func mayRestart() -> Bool {
+        isIdle() && !Windows.isShowing("wizard") && !NSApp.windows.contains { $0.isVisible && $0.attachedSheet != nil }
     }
 
     /// The app is quitting: a waiting update goes in, and the app stays closed.
     func installOnQuit() {
-        guard enabled, staged != nil, !installing else { return }
-        install(relaunch: false)
+        guard enabled, staged != nil else { return }
+        put(restart: .none)
     }
 
-    private func install(relaunch: Bool) {
+    /// Says so first, then installs a moment later, once an open window has shown it, if `when` still holds.
+    private func install(restart: Restart, when: @escaping () -> Bool) {
+        guard !installing, let staged else { return }
+        if case .installing = phase { return }
+        phase = .installing(staged.version)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard when() else {  // work began meanwhile: a later check installs it
+                if case .installing = self.phase { self.phase = .ready(staged.version) }
+                return
+            }
+            self.put(restart: restart)
+        }
+    }
+
+    private func put(restart: Restart) {
         guard !installing, let staged else { return }
         let target = Bundle.main.bundleURL
         let parent = target.deletingLastPathComponent().path
@@ -240,7 +273,7 @@ final class Updater {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/bash")
             process.arguments = [script.path, String(ProcessInfo.processInfo.processIdentifier), incoming.path,
-                                 target.path, relaunch ? "1" : "0"]
+                                 target.path, restart.rawValue]
             process.standardInput = FileHandle.nullDevice
             process.standardOutput = FileHandle.nullDevice
             process.standardError = logHandle
@@ -250,7 +283,7 @@ final class Updater {
             phase = .failed(.broken(error.localizedDescription))
             return
         }
-        if relaunch { NSApp.terminate(nil) }
+        if restart != .none { NSApp.terminate(nil) }
     }
 }
 

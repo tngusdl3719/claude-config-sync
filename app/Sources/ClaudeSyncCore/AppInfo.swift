@@ -1,7 +1,7 @@
 /// What the app says about itself; the build script stamps the same version into Info.plist.
 public enum AppInfo {
     public static let name = "Claude Sync"
-    public static let version = "0.6.2"
+    public static let version = "0.6.3"
     /// Where releases come from (GitHub owner/repository).
     public static let repository = "tngusdl3719/claude-config-sync"
     /// The public half of the key that signs releases (scripts/update-key.sh; the private half stays in

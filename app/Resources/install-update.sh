@@ -1,7 +1,8 @@
 #!/bin/bash
 # Finishes an update the app has already swapped in (UpdateInstall: a whole copy beside the app, exchanged
-# in one step), once the app has quit:  install-update.sh <pid> <old app> <target app> <relaunch: 1|0>
-# The old copy goes, and the new app starts in the background when asked.
+# in one step), once the app has quit:  install-update.sh <pid> <old app> <target app> <relaunch>
+# The old copy goes, and the new app starts as asked: 1 in the background, window in the background with its
+# window open again, front in front with its window, 0 not at all.
 set -u
 pid=$1 old=$2 target=$3 relaunch=$4
 open_cmd=${CLAUDE_SYNC_OPEN:-/usr/bin/open}
@@ -19,5 +20,9 @@ if kill -0 "$pid" 2>/dev/null; then
 fi
 rm -rf "$old"
 say "installed $target"
-[ "$relaunch" = 1 ] && "$open_cmd" -g "$target" --args --after-update
+case "$relaunch" in
+  1) "$open_cmd" -g "$target" --args --after-update ;;
+  window) "$open_cmd" -g "$target" --args --after-update --show-window ;;
+  front) "$open_cmd" "$target" --args --after-update --show-window ;;
+esac
 exit 0

@@ -2,45 +2,40 @@ import AppKit
 import ClaudeSyncCore
 import SwiftUI
 
-/// Where this PC's shared history lives, and the ways to connect it again or move it.
+/// Where this PC's shared history lives: GitLab, GitHub and Notion listed, the one in use switched on.
+/// Switching another on moves this PC there; the one in use can be connected again.
 struct StoragePane: View {
     @Environment(AppModel.self) private var model
     @State private var change: StorageChangeView.Mode?
 
     var body: some View {
         let storage = model.status?.storage
-        let text = Presentation.storage(storage)
+        let current = storage.map(StorageKind.of)
+        let waiting = model.busy != nil || model.syncing
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label(text.title, systemImage: storage?.backend == .notion ? "doc.text" : "server.rack")
-                            .font(.title2.bold())
-                        Text(text.detail).textSelection(.enabled)
-                        if let link = Self.link(storage) {
-                            Link(Presentation.storageLink(storage), destination: link)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(6)
+            VStack(alignment: .leading, spacing: 14) {
+                Text(L10n.t("한 번에 한 저장소만 켜져요. 다른 저장소를 켜면 공용 설정을 그쪽으로 옮겨요. 다른 PC도 같은 저장소를 켜야 서로 동기화돼요.",
+                            "One storage is on at a time. Switching another on moves the shared settings there. Other PCs must switch on the same one to keep syncing."))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                ForEach(StorageKind.allCases) { kind in
+                    row(kind, on: kind == current, storage: storage, waiting: waiting)
                 }
-                HStack {
-                    Button(L10n.t("다시 연결…", "Connect again…")) { change = .reconnect }
-                    Button(L10n.t("저장소 바꾸기…", "Change storage…")) { change = .move }
-                }
-                .disabled(model.busy != nil || model.syncing)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(LocalizedStringKey(L10n.t("**다시 연결**: 같은 저장소에 토큰이나 Notion 로그인을 새로 받아요. 연결이 끊겼다는 안내가 나오면 여기서 하세요.",
-                                                    "**Connect again**: a new token or Notion sign-in for the same storage. Use it when you are told the connection was lost.")))
-                    Text(LocalizedStringKey(L10n.t("**저장소 바꾸기**: GitLab·GitHub·Notion 사이를 옮겨요. 다른 PC도 같은 저장소로 옮겨야 서로 동기화돼요. 옮길 곳에 이 PC와 이어지지 않는 다른 공용 설정이 있으면 옮기지 않아요.",
-                                                    "**Change storage**: move between GitLab, GitHub and Notion. Other PCs must move to the same storage to keep syncing. A storage holding shared settings unrelated to this PC's is refused.")))
-                    if model.status?.receiveOnly == true {
-                        Text(L10n.t("받기 전용 PC는 아무것도 올리지 않으므로, Notion은 올리는 PC가 먼저 옮겨 간 페이지로만 옮길 수 있어요.",
-                                    "A receive-only PC sends nothing, so it can move only to a Notion page a sending PC has moved to first."))
+                // Other work shows on the work line below; a sync does not, so say why the switches wait.
+                if model.syncing {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(L10n.t("동기화 중이에요. 끝나면 바꿀 수 있어요", "Syncing. Changes wait until it is done"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                if model.status?.receiveOnly == true {
+                    Text(L10n.t("받기 전용 PC는 아무것도 올리지 않으므로, Notion은 올리는 PC가 먼저 옮겨 간 페이지로만 옮길 수 있어요.",
+                                "A receive-only PC sends nothing, so it can move only to a Notion page a sending PC has moved to first."))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 WorkLine()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -48,6 +43,43 @@ struct StoragePane: View {
         }
         .sheet(item: $change) { mode in
             StorageChangeView(mode: mode).environment(model)
+        }
+    }
+
+    private func row(_ kind: StorageKind, on: Bool, storage: Storage?, waiting: Bool) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Label(kind.title, systemImage: kind == .notion ? "doc.text" : "server.rack").font(.title3.bold())
+                    Spacer()
+                    // Only switching on does something: the one in use goes off when another comes on.
+                    Toggle(kind.title, isOn: Binding(get: { on }, set: { if $0 && !on { change = .move(kind) } }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .disabled(on || waiting)
+                        .help(on ? L10n.t("지금 쓰는 저장소예요. 다른 저장소를 켜면 꺼져요", "In use. It goes off when another one is switched on")
+                                 : kind.moveTitle)
+                }
+                if on {
+                    let text = Presentation.storage(storage)
+                    Text(text.detail).textSelection(.enabled)
+                    if let link = Self.link(storage) {
+                        Link(Presentation.storageLink(storage), destination: link)
+                    }
+                    HStack {
+                        Button(L10n.t("다시 연결…", "Connect again…")) { change = .reconnect }
+                            .disabled(waiting)
+                        Text(L10n.t("토큰이나 Notion 로그인을 새로 받아요. 연결이 끊겼다는 안내가 나오면 하세요.",
+                                    "A new token or Notion sign-in. Use it when you are told the connection was lost."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(kind.blurb).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(6)
         }
     }
 
@@ -59,11 +91,16 @@ struct StoragePane: View {
     }
 }
 
-/// Connect again to the same storage, or move to GitLab or Notion.
+/// Connect again to the same storage, or move to another one.
 struct StorageChangeView: View {
-    enum Mode: String, Identifiable {
-        case reconnect, move
-        var id: Self { self }
+    enum Mode: Identifiable, Hashable {
+        case reconnect, move(StorageKind)
+        var id: String {
+            switch self {
+            case .reconnect: return "reconnect"
+            case .move(let kind): return "move-\(kind.rawValue)"
+            }
+        }
     }
 
     let mode: Mode
@@ -85,19 +122,18 @@ struct StorageChangeView: View {
     @State private var problem: String?
 
     private var signingIn: Bool { backend == .notion && oauthClient != nil && !useSecretKey }
-    /// The git host the help (new repository, token) is for: the address typed, else the tab chosen.
+    /// The git host the help (new repository, token) is for: the address typed, else the storage chosen.
     private var gitKind: StorageKind { StorageKind.forAddress(repoText, chosen: kind) }
+    private var moving: Bool { mode != .reconnect }
+
+    init(mode: Mode) {
+        self.mode = mode
+        if case .move(let target) = mode { _kind = State(initialValue: target) }  // its title from the first frame
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(mode == .reconnect ? L10n.t("다시 연결", "Connect again") : L10n.t("저장소 바꾸기", "Change storage")).font(.title2.bold())
-            if mode == .move {
-                Picker(L10n.t("저장소", "Storage"), selection: $kind) {
-                    ForEach(StorageKind.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
+            Text(moving ? kind.moveTitle : L10n.t("다시 연결", "Connect again")).font(.title2.bold())
             if backend == .git {
                 gitFields
             } else if signingIn, let oauthClient {
@@ -140,12 +176,12 @@ struct StorageChangeView: View {
 
     private var gitFields: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if mode == .move && gitKind == .github {
+            if moving && gitKind == .github {
                 Text(LocalizedStringKey(L10n.t("GitHub의 **비공개** 저장소 주소예요. 비어 있거나 README만 있는 새 저장소(.gitignore·라이선스 템플릿 없이), 또는 다른 PC가 이미 쓰는 저장소로 옮길 수 있어요.",
                                                 "The address of a **private** GitHub repository: a new one (empty or with only a README; no .gitignore or license template), or the one other PCs already use.")))
                     .font(.callout)
                 Link(L10n.t("GitHub에서 새 저장소 만들기", "Make a new repository on GitHub"), destination: Wizard.newRepoPage(.github))
-            } else if mode == .move {
+            } else if moving {
                 Text(LocalizedStringKey(L10n.t("GitLab 같은 git 호스팅의 **비공개** 프로젝트 주소예요. 새로 만든다면 Settings → Repository → Protected branches 에서 main 보호를 풀어 주세요.",
                                                 "The address of a **private** project on a git host such as GitLab. For a new one, unprotect main in Settings → Repository → Protected branches.")))
                     .font(.callout)
@@ -200,7 +236,7 @@ struct StorageChangeView: View {
     private func prefill() {
         let storage = model.status?.storage
         let current = storage.map(StorageKind.of) ?? (model.status?.backend == .notion ? .notion : .gitlab)
-        kind = mode == .reconnect ? current : (current == .notion ? .gitlab : .notion)
+        if case .move(let target) = mode { kind = target } else { kind = current }
         username = (storage?.username.isEmpty == false ? storage?.username : model.status?.pc) ?? ""
         guard mode == .reconnect else { return }  // moving starts from empty fields
         if current != .notion { repoText = storage?.remote ?? "" }

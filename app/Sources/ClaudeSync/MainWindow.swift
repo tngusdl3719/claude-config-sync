@@ -32,10 +32,12 @@ enum MainSection: String, CaseIterable, Identifiable {
 
 @MainActor
 enum MainWindow {
-    /// Brings the main window forward (made once; its state survives closing it).
-    static func open(_ model: AppModel, at section: MainSection? = nil) {
+    /// Brings the main window forward (made once; its state survives closing it); `activate: false` leaves
+    /// the app that is in front there.
+    static func open(_ model: AppModel, at section: MainSection? = nil, activate: Bool = true) {
         if let section { model.section = section }
-        Windows.show("main", title: "Claude Sync", size: NSSize(width: 880, height: 600), replace: false) {
+        Windows.show("main", title: "Claude Sync", size: NSSize(width: 880, height: 600), replace: false,
+                     activate: activate) {
             MainView().environment(model)
         }
     }

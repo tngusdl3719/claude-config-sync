@@ -12,13 +12,13 @@ enum Windows {
     /// `replace: false` keeps an open window's view (and its state) as it is.
     static func show<V: View>(_ id: String, title: @escaping @autoclosure () -> String,
                               size: NSSize = NSSize(width: 560, height: 520),
-                              replace: Bool = true, @ViewBuilder content: () -> V) {
+                              replace: Bool = true, activate: Bool = true, @ViewBuilder content: () -> V) {
         titles[id] = title
         if let window = open[id] {
             if replace { window.contentViewController = NSHostingController(rootView: content()) }
             window.title = title()
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            if activate { NSApp.activate(ignoringOtherApps: true) }
             return
         }
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
@@ -31,8 +31,10 @@ enum Windows {
         window.center()
         open[id] = window
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if activate { NSApp.activate(ignoringOtherApps: true) }
     }
+
+    static func isShowing(_ id: String) -> Bool { open[id]?.isVisible == true }
 
     static func close(_ id: String) {
         open[id]?.close()
@@ -231,16 +233,23 @@ private struct UpdateSection: View {
     var body: some View {
         Section(L10n.t("업데이트", "Updates")) {
             Toggle(L10n.t("자동 업데이트", "Update automatically"), isOn: $updater.enabled)
-            Text(Presentation.update(updater.phase)).font(.callout)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(Presentation.update(updater.phase, automatic: updater.enabled)).font(.callout)
+                switch updater.phase.bar {
+                case .part(let part)?: ProgressView(value: part)
+                case .busy?: ProgressView().progressViewStyle(.linear)
+                case nil: EmptyView()
+                }
+            }
             HStack {
                 Button(L10n.t("지금 확인", "Check now")) { Task { await updater.check() } }
-                    .disabled(updater.phase == .checking || { if case .downloading = updater.phase { return true } else { return false } }())
+                    .disabled(updater.phase.bar != nil)
                 if case .ready = updater.phase {
                     Button(L10n.t("설치하고 다시 시작", "Install and restart")) { updater.installNow() }
                 }
             }
-            Text(L10n.t("새 버전은 GitHub에서 받아 서명을 확인한 뒤, 창이 닫혀 있고 동기화 중이 아닐 때 설치하고 조용히 다시 시작해요. 회사 Mac처럼 GitHub에 접속할 수 없으면 확인만 실패하고 넘어가요.",
-                        "New versions come from GitHub. After checking the signature, the app installs one and quietly restarts while no window is open and nothing syncs. A Mac that cannot reach GitHub (a work Mac) just skips the check."))
+            Text(L10n.t("새 버전은 GitHub에서 받아 서명을 확인한 뒤 바로 설치하고 다시 시작해요. 동기화 중이거나 설정·저장소 바꾸기 창이 열려 있으면 끝난 뒤에 하고, 창이 열려 있었다면 다시 열어요. 회사 Mac처럼 GitHub에 접속할 수 없으면 확인만 실패하고 넘어가요.",
+                        "New versions come from GitHub. After checking the signature, the app installs one and restarts right away (after a running sync, setup or storage change), opening its window again if one was open. A Mac that cannot reach GitHub (a work Mac) just skips the check."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

@@ -63,18 +63,61 @@ private func release(_ tag: String, assets: [String], draft: Bool = false, prere
     @Test func updateStatusSpeaksBothLanguages() {
         L10n.$override.withValue(.ko) {
             #expect(Presentation.update(.upToDate) == "최신 버전이에요 (\(AppInfo.version))")
-            #expect(Presentation.update(.downloading("0.7.0")) == "0.7.0 받는 중…")
-            #expect(Presentation.update(.ready("0.7.0")) == "0.7.0을 받아 두었어요. 창을 닫고 작업이 없을 때 설치하고 다시 시작해요")
+            #expect(Presentation.update(.downloading("0.7.0", nil)) == "0.7.0 받는 중…")
+            #expect(Presentation.update(.downloading("0.7.0", 0.456)) == "0.7.0 받는 중… 45%")
+            #expect(Presentation.update(.preparing("0.7.0")) == "0.7.0 서명을 확인하고 준비하는 중…")
+            #expect(Presentation.update(.ready("0.7.0")) == "새 버전(0.7.0)을 받아 두었어요. 하던 작업이 끝나면 설치하고 다시 시작해요")
+            #expect(Presentation.update(.ready("0.7.0"), automatic: false) == "새 버전(0.7.0)을 받아 두었어요. '설치하고 다시 시작'을 누르면 설치해요")
+            #expect(Presentation.update(.installing("0.7.0")) == "0.7.0 설치하는 중… 끝나면 다시 시작해요")
             #expect(Presentation.update(.failed(.offline)) == "업데이트를 확인하지 못했어요: GitHub에 연결할 수 없어요")
             #expect(Presentation.update(.failed(.badSignature)).contains("서명"))
         }
         L10n.$override.withValue(.en) {
             #expect(Presentation.update(.idle) == "Not checked yet")
             #expect(Presentation.update(.checking) == "Checking for updates…")
+            #expect(Presentation.update(.downloading("0.7.0", 1)) == "Downloading 0.7.0… 100%")
+            #expect(Presentation.update(.preparing("0.7.0")) == "Checking the signature of 0.7.0…")
+            #expect(Presentation.update(.installing("0.7.0")) == "Installing 0.7.0… the app restarts when it is done")
+            #expect(Presentation.update(.ready("0.7.0")) == "0.7.0 is ready. It installs and restarts once the running work is done")
+            #expect(Presentation.update(.ready("0.7.0"), automatic: false) == "0.7.0 is ready. Press Install and restart to install it")
             #expect(Presentation.update(.failed(.noPermission("/Applications"))) == "Could not update: no permission to write in /Applications")
             #expect(Presentation.update(.failed(.http(503))) == "Could not check for updates: GitHub answered 503")
             #expect(Presentation.update(.failed(.notThisApp)).contains("not this app"))
         }
+    }
+
+    @Test func aBarShowsWhileAnUpdateIsUnderWay() {
+        #expect(UpdatePhase.checking.bar == .busy)
+        #expect(UpdatePhase.downloading("0.7.0", nil).bar == .busy)
+        #expect(UpdatePhase.downloading("0.7.0", 0.25).bar == .part(0.25))
+        #expect(UpdatePhase.preparing("0.7.0").bar == .busy)
+        #expect(UpdatePhase.installing("0.7.0").bar == .busy)
+        for phase in [UpdatePhase.idle, .upToDate, .ready("0.7.0"), .failed(.offline)] {
+            #expect(phase.bar == nil)
+        }
+    }
+
+    @Test func aDownloadSaysHowFarItHasGot() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("download-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("release.dmg")
+        let data = Data((0..<1_000_000).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+        try data.write(to: source)
+        let seen = Seen()
+        let (file, _) = try await UpdateDownload.fetch(source) { seen.add($0) }
+        #expect(try Data(contentsOf: file) == data)
+        let parts = seen.values.compactMap { $0 }
+        #expect(parts.last == 1)
+        #expect(parts == parts.sorted(), "it only goes forward")
+        try? FileManager.default.removeItem(at: file)
+    }
+
+    final class Seen: @unchecked Sendable {
+        private let lock = NSLock()
+        private var kept: [Double?] = []
+        func add(_ value: Double?) { lock.withLock { kept.append(value) } }
+        var values: [Double?] { lock.withLock { kept } }
     }
 
     @Test func theAppsReleaseKeyIsAKey() {

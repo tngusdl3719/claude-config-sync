@@ -28,7 +28,7 @@ The app speaks Korean and English: **Settings → 언어 / Language**. The engin
 
 ### Updates
 
-The app keeps itself up to date. Once a day it asks GitHub for the latest release, downloads it, and checks its signature against the release key built into the app; anything else is not installed. It then installs the update and quietly restarts while no window is open and nothing is syncing (or when you quit it). Turn this off, check now, or install right away under **Settings → Updates**. A Mac that cannot reach GitHub (a work Mac, say) just skips the check; give it a new version by hand.
+The app keeps itself up to date. Once a day it asks GitHub for the latest release, downloads it, and checks its signature against the release key built into the app; anything else is not installed. It then installs the update and restarts right away (after a sync, setup or storage change that is under way), opening its window again if one was open; **Settings → Updates** shows how far it has got. Turn this off, check now, or install right away under **Settings → Updates**. A Mac that cannot reach GitHub (a work Mac, say) just skips the check; give it a new version by hand.
 
 An update also carries the sync engine. When the app's engine is newer than the one in your shared storage, a PC that sends puts it there, and the other PCs pick it up on their next sync (a **Receive only** PC never does this).
 
